@@ -1,0 +1,20 @@
+{
+  "name": "truthlens-ai-workspace",
+  "version": "1.0.0",
+  "description": "TruthLens AI - Deepfake & Scam Detection Platform",
+  "private": true,
+  "scripts": {
+    "dev": "npm --prefix frontend run dev",
+    "build": "npm --prefix frontend run build",
+    "lint": "npm --prefix frontend run lint",
+    "test": "npm --prefix frontend test",
+    "install:frontend": "npm --prefix frontend install"
+  },
+  "keywords": [
+    "deepfake-detection",
+    "scam-detection",
+    "multimodal-ai"
+  ],
+  "author": "TruthLens Team",
+  "license": "MIT"
+}

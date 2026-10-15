@@ -1,0 +1,7 @@
+# ESLint ignore patterns
+node_modules/
+dist/
+build/
+*.config.js
+*.config.ts
+coverage/
