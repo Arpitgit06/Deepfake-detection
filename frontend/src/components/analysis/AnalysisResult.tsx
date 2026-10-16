@@ -1,14 +1,16 @@
-import { cn, getSeverityColor, getSeverityIcon, formatConfidence, formatDuration, truncate } from '@/lib/utils'
+import { cn, getSeverityColor, getSeverityIcon, formatConfidence, formatDuration, truncate, verdictLabel } from '@/lib/utils'
+import { useState } from 'react'
 import { Card } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
 import { Progress } from '@/components/ui/Progress'
 import { Collapsible } from '@/components/ui/Collapsible'
 import { Alert } from '@/components/ui/Alert'
 import { Button } from '@/components/ui/Button'
+import { askLLM } from '@/services/api'
 import { 
   AlertCircle, CheckCircle, AlertTriangle, Info, 
   Heart, Mic, Brain, Shield, Search, Eye, 
-  ChevronRight, ExternalLink, Download
+  ChevronRight, ExternalLink, Download, Loader2
 } from 'lucide-react'
 import { Explanation, AnalysisResult } from '@/store/appStore'
 
@@ -20,7 +22,8 @@ const severityIcons = {
 } as const
 
 const getSeverityIconComponent = (severity: Explanation['severity']) => {
-  return severityIcons[severity] as React.ComponentType<React.SVGProps<SVGSVGElement>>
+  // Unknown severities fall back to the info icon instead of crashing
+  return (severityIcons[severity] ?? Info) as React.ComponentType<React.SVGProps<SVGSVGElement>>
 }
 
 export const ExplanationList = ({ explanations }: { explanations: Explanation[] }) => {
@@ -69,21 +72,23 @@ export const ConfidenceIndicator = ({
   confidence, 
   label = 'Confidence', 
   showProgress = true,
-  size = 'md'
+  size = 'md',
+  risk = false,
 }: { 
   confidence: number 
   label?: string 
   showProgress?: boolean
   size?: 'sm' | 'md' | 'lg'
+  risk?: boolean
 }) => {
-  const color = confidence >= 0.8 ? 'danger' : confidence >= 0.6 ? 'warning' : confidence >= 0.4 ? 'primary' : 'success'
+  const color = !risk ? 'primary' : confidence >= 0.7 ? 'danger' : confidence > 0.3 ? 'warning' : 'success'
   
   return (
     <div className="flex items-center gap-4">
       <div className={cn('flex-1', size === 'sm' && 'max-w-xs')}>
         <div className="flex items-center justify-between text-sm mb-1">
           <span className="font-medium text-gray-700">{label}</span>
-          <span className={cn('font-semibold', getSeverityColor(confidence >= 0.6 ? 'error' : 'success').split(' ')[0])}>
+          <span className="font-semibold text-gray-700">
             {formatConfidence(confidence)}
           </span>
         </div>
@@ -115,6 +120,7 @@ export const DetectorResultCard = ({
   }
 
   const detectorTitles: Record<string, string> = {
+    ai_generated_image: 'AI Image Detection — Whole Image',
     ppg_liveness: 'PPG Liveness Detection',
     phoneme_viseme: 'Phoneme-Viseme Sync',
     deepfake_image: 'Deepfake Detection',
@@ -123,11 +129,14 @@ export const DetectorResultCard = ({
     video_ppg: 'PPG Liveness Detection',
     video_phoneme_viseme: 'Phoneme-Viseme Sync',
     financial_threat: 'Financial Threat Analysis',
-    image_deepfake: 'Image Deepfake Detection',
+    image_deepfake: 'Face Manipulation Check',
   }
 
   const confidence = result.confidence ?? 0
   const isThreat = result.is_deepfake ?? result.is_threat ?? (result.is_synchronized === false)
+  const detectorStatus = result.status || (isThreat ? 'suspicious' : 'clean')
+  const aiScore = typeof result.ai_probability === 'number' ? result.ai_probability : null
+  const noScore = ['not_applicable', 'inconclusive', 'unavailable', 'error'].includes(detectorStatus)
   
   return (
     <Card className="overflow-hidden">
@@ -140,11 +149,13 @@ export const DetectorResultCard = ({
             <div>
               <h4 className="font-semibold text-gray-900">{detectorTitles[detectorName] || detectorName}</h4>
               <p className="text-xs text-gray-500">
-                {isThreat ? 'Threat Detected' : 'No Threat Detected'}
+                {verdictLabel(detectorStatus)}
               </p>
             </div>
           </div>
-          <ConfidenceIndicator confidence={confidence} label="Confidence" size="sm" />
+          {detectorName === 'ai_generated_image' ? (
+            aiScore !== null && <ConfidenceIndicator confidence={aiScore} label="AI-generation model score" size="sm" risk />
+          ) : !noScore && <ConfidenceIndicator confidence={confidence} label="Confidence" size="sm" />}
         </div>
       </div>
       
@@ -347,18 +358,24 @@ function drawSignal(canvas: HTMLCanvasElement, signal: number[]) {
 }
 
 export const AnalysisResultView = ({ result }: { result: AnalysisResult }) => {
-  const detectorResults = Object.entries(result.results).filter(([_, v]) => v && typeof v === 'object' && !v.error)
-  const hasErrors = Object.values(result.results).some((v: any) => v?.error)
+  // Defensive: the payload shape is not guaranteed for every job
+  const resultEntries = Object.entries(result?.results ?? {})
+  const detectorResults = resultEntries.filter(([_, v]) => v && typeof v === 'object' && !v.error)
+  const hasErrors = resultEntries.some(([_, v]: any) => v?.error)
+  const confidence = result?.confidence ?? 0
+  const unknown = !['suspicious', 'clean'].includes(result.status)
+  const imageResult = result.results?.ai_generated_image
+  const imageScore = typeof imageResult?.ai_probability === 'number' ? imageResult.ai_probability : null
 
   return (
     <div className="space-y-6">
       {/* Overall Status */}
-      <Card className={cn('border-l-4', result.status === 'suspicious' ? 'border-danger-500' : 'border-success-500')}>
+      <Card className={cn('border-l-4', unknown ? 'border-warning-500' : result.status === 'suspicious' ? 'border-danger-500' : 'border-success-500')}>
         <div className="p-6">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
-              <div className={cn('p-3 rounded-xl', result.status === 'suspicious' ? 'bg-danger-100' : 'bg-success-100')}>
-                {result.status === 'suspicious' ? (
+              <div className={cn('p-3 rounded-xl', unknown ? 'bg-warning-100' : result.status === 'suspicious' ? 'bg-danger-100' : 'bg-success-100')}>
+                {unknown ? <AlertTriangle className="w-6 h-6 text-warning-600" /> : result.status === 'suspicious' ? (
                   <AlertCircle className="w-6 h-6 text-danger-600" />
                 ) : (
                   <CheckCircle className="w-6 h-6 text-success-600" />
@@ -366,18 +383,40 @@ export const AnalysisResultView = ({ result }: { result: AnalysisResult }) => {
               </div>
               <div>
                 <h2 className="text-xl font-bold text-gray-900">
-                  {result.status === 'suspicious' ? 'Threat Detected' : 'Clean'}
+                  {result.status === 'suspicious' && imageResult ? 'AI-generated or edited indicators' : verdictLabel(result.status)}
                 </h2>
-                <p className="text-gray-500">Analysis ID: {truncate(result.analysis_id, 12)}</p>
+                <p className="text-gray-500">Analysis ID: {truncate(result.analysis_id ?? '', 12)}</p>
               </div>
             </div>
             <div className="text-right">
-              <ConfidenceIndicator confidence={result.confidence} label="Overall Confidence" size="lg" />
-              <p className="text-xs text-gray-500 mt-1">Processed in {formatDuration(result.processing_time_ms)}</p>
+              {imageScore !== null ? <ConfidenceIndicator confidence={imageScore} label="AI-generation model score" size="lg" risk />
+                : !unknown && confidence > 0 ? <ConfidenceIndicator confidence={confidence} label="Verdict confidence" size="lg" />
+                : <p className="text-sm text-gray-500">{imageResult?.metadata_evidence?.length ? 'Metadata evidence' : 'Insufficient evidence for a verdict'}</p>}
+              <p className="text-xs text-gray-500 mt-1">Processed in {formatDuration(result.processing_time_ms ?? 0)}</p>
             </div>
           </div>
         </div>
       </Card>
+
+      {unknown && <Alert variant="warning">The available evidence is insufficient to determine authenticity. This result does not mean the image is real.</Alert>}
+
+      {/* AI Explanation (local Qwen LLM) */}
+      {result.llm_summary && (
+        <Card>
+          <div className="p-4 border-b border-gray-200 flex items-center gap-3">
+            <div className="p-2 bg-primary-100 rounded-lg text-primary-600">
+              <Brain className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="font-semibold text-gray-900">AI Explanation</h3>
+              <p className="text-xs text-gray-500">Generated locally by Qwen3-4B (runs in GPU memory only during the task)</p>
+            </div>
+          </div>
+          <div className="p-4">
+            <p className="text-sm text-gray-700 whitespace-pre-line">{result.llm_summary}</p>
+          </div>
+        </Card>
+      )}
 
       {hasErrors && (
         <Alert variant="warning">
@@ -386,6 +425,11 @@ export const AnalysisResultView = ({ result }: { result: AnalysisResult }) => {
       )}
 
       {/* Detector Results */}
+      {detectorResults.some(([, detector]) => detector.model_used === 'heuristic_ensemble' && detector.status !== 'not_applicable') && (
+        <Alert variant="warning">
+          Trained face-manipulation weights are not installed. Facial heuristic checks are inconclusive; whole-image AI classification is reported separately.
+        </Alert>
+      )}
       <div className="space-y-4">
         {detectorResults.map(([detectorName, detectorResult]) => (
           <DetectorResultCard
@@ -423,7 +467,75 @@ export const AnalysisResultView = ({ result }: { result: AnalysisResult }) => {
           </div>
         </div>
       </Collapsible>
+
+      {/* Ask the local AI about this result */}
+      <AskAIPanel analysisId={result.analysis_id} />
     </div>
+  )
+}
+
+const AskAIPanel = ({ analysisId }: { analysisId: string }) => {
+  const [question, setQuestion] = useState('')
+  const [answer, setAnswer] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const submit = async () => {
+    if (!question.trim()) return
+    setLoading(true)
+    setError(null)
+    setAnswer(null)
+    try {
+      const response = await askLLM(analysisId, question.trim())
+      setAnswer(response.answer)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'The AI assistant is unavailable')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <Card>
+      <div className="p-4 border-b border-gray-200 flex items-center gap-3">
+        <div className="p-2 bg-primary-100 rounded-lg text-primary-600">
+          <Brain className="w-5 h-5" />
+        </div>
+        <div>
+          <h3 className="font-semibold text-gray-900">Ask AI about this result</h3>
+          <p className="text-xs text-gray-500">Local Qwen3-4B loads into VRAM to answer, then frees it</p>
+        </div>
+      </div>
+      <div className="p-4">
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={question}
+            onChange={(e) => setQuestion(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') submit() }}
+            placeholder="e.g. Why was this flagged as suspicious?"
+            className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+            disabled={loading}
+          />
+          <Button onClick={submit} disabled={loading || !question.trim()} loading={loading}>
+            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+            Ask
+          </Button>
+        </div>
+
+        {loading && (
+          <p className="text-xs text-gray-500 mt-3">
+            Loading the AI model into GPU memory... this can take a few seconds.
+          </p>
+        )}
+        {error && <Alert variant="danger" className="mt-3">{error}</Alert>}
+        {answer && (
+          <div className="mt-3 p-4 bg-primary-50 border border-primary-200 rounded-lg">
+            <p className="text-sm text-gray-700 whitespace-pre-line">{answer}</p>
+          </div>
+        )}
+      </div>
+    </Card>
   )
 }
 

@@ -1,6 +1,19 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
+/**
+ * crypto.randomUUID() only exists in secure contexts (https or localhost).
+ * The dev server binds to 0.0.0.0, so opening the app via a LAN address over
+ * plain HTTP used to crash analysis with a TypeError (white screen). This
+ * fallback keeps UUIDs working everywhere.
+ */
+const generateId = (): string => {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  return `id-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 11)}`
+}
+
 export interface AnalysisResult {
   analysis_id: string
   status: string
@@ -9,6 +22,7 @@ export interface AnalysisResult {
   explanations: Explanation[]
   processing_time_ms: number
   timestamp: string
+  llm_summary?: string
 }
 
 export interface Explanation {
@@ -55,7 +69,7 @@ export const useAppStore = create<AppState>()(
       theme: 'light',
       
       addJob: (job) => {
-        const id = crypto.randomUUID()
+        const id = generateId()
         const newJob: AnalysisJob = {
           ...job,
           id,

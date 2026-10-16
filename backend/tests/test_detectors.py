@@ -169,8 +169,10 @@ class TestDeepfakeImageDetector:
     def test_heuristic_analysis(self, detector):
         # Test with a simple face crop
         face = np.random.randint(0, 255, (224, 224, 3), dtype=np.uint8)
-        score = detector._heuristic_analysis(face)
+        score, details = detector._heuristic_analysis(face)
         assert 0 <= score <= 1
+        assert isinstance(details, dict)
+        assert 0 <= details["heuristic_score"] <= 1
 
     def test_radial_profile(self, detector):
         image = np.ones((100, 100))

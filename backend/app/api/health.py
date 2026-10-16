@@ -13,6 +13,8 @@ class HealthResponse(BaseModel):
     gpu_available: bool
     gpu_name: str | None = None
     models_loaded: Dict[str, bool]
+    llm: Dict[str, Any] = {}
+    ai_image: Dict[str, Any] = {}
 
 
 @router.get("/health", response_model=HealthResponse)
@@ -20,17 +22,27 @@ async def health_check():
     gpu_available = torch.cuda.is_available()
     gpu_name = torch.cuda.get_device_name(0) if gpu_available else None
 
+    from app.services.llm_manager import llm_manager
+    from app.services.analysis_service import analysis_service
+    llm_status = llm_manager.status()
+    llm_gpu = llm_status['gpu_offload_supported'] and bool(llm_status['vram'])
+    if llm_gpu and not gpu_name:
+        gpu_name = llm_status['vram']['name']
+
     return HealthResponse(
         status="healthy",
         version="1.0.0",
-        gpu_available=gpu_available,
+        gpu_available=gpu_available or llm_gpu,
         gpu_name=gpu_name,
         models_loaded={
-            "ppg_liveness": True,  # Will be updated when models load
-            "deepfake_detector": True,
-            "phoneme_viseme": True,
-            "financial_threat": True,
+            "ppg_liveness": analysis_service.ppg_detector is not None,
+            "deepfake_detector": analysis_service.image_detector.model is not None,
+            "ai_image_detector": analysis_service.ai_image_detector.model is not None,
+            "phoneme_viseme": analysis_service.phoneme_viseme_detector.asr_model is not None,
+            "financial_threat": analysis_service.financial_detector is not None,
         },
+        llm=llm_status,
+        ai_image=analysis_service.ai_image_detector.status(),
     )
 
 
@@ -38,6 +50,7 @@ async def health_check():
 async def detailed_health():
     import psutil
     import platform
+    from app.services.llm_manager import llm_manager
 
     return {
         "system": {
@@ -56,4 +69,5 @@ async def detailed_health():
         },
         "opencv": cv2.__version__,
         "torch": torch.__version__,
+        "llm": llm_manager.status(),
     }

@@ -5,6 +5,25 @@ from app.main import app
 client = TestClient(app)
 
 
+def test_image_upload_round_trip(monkeypatch):
+    import io
+    from PIL import Image
+    from app.core.config import settings
+    monkeypatch.setattr(settings, 'LLM_ENABLED', False)
+    payload = io.BytesIO()
+    Image.new('RGB', (128, 128), 'white').save(payload, format='PNG')
+    response = client.post('/api/v1/analyze/image', files={
+        'file': ('sample.png', payload.getvalue(), 'image/png'),
+    }, data={'return_heatmap': 'true', 'sensitivity': '0.5'})
+    assert response.status_code == 200
+    result = response.json()
+    assert 'image_deepfake' in result['results']
+    assert result['timestamp']
+    report = client.get(f"/api/v1/analyze/{result['analysis_id']}/report")
+    assert report.status_code == 200
+    assert report.json()['analysis_id'] == result['analysis_id']
+
+
 def test_root():
     response = client.get("/")
     assert response.status_code == 200

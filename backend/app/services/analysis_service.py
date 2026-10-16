@@ -10,6 +10,8 @@ from app.detectors.ppg_liveness import PPGLivenessDetector
 from app.detectors.phoneme_viseme import PhonemeVisemeDetector
 from app.detectors.financial_threat import FinancialThreatDetector
 from app.detectors.deepfake_image import DeepfakeImageDetector
+from app.detectors.ai_generated_image import AIGeneratedImageDetector
+from app.services.llm_manager import llm_manager
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -33,6 +35,7 @@ class AnalysisService:
         self.phoneme_viseme_detector = PhonemeVisemeDetector()
         self.financial_detector = FinancialThreatDetector()
         self.image_detector = DeepfakeImageDetector()
+        self.ai_image_detector = AIGeneratedImageDetector()
 
     async def analyze_image(
         self,
@@ -45,7 +48,8 @@ class AnalysisService:
         job = self._create_job(analysis_id)
 
         try:
-            # Run deepfake detection on image
+            # Full-image classification always runs, with or without faces.
+            ai_result = await self.ai_image_detector.detect(image_bytes)
             result = await self.image_detector.detect(
                 image_bytes=image_bytes,
                 sensitivity=sensitivity,
@@ -57,9 +61,13 @@ class AnalysisService:
             # Format response
             response = self._format_response(
                 analysis_id=analysis_id,
-                results={"image_deepfake": result},
+                results={"ai_generated_image": ai_result, "image_deepfake": result},
                 processing_time_ms=processing_time,
             )
+
+            # Local Qwen LLM explains the result in plain language (VRAM is
+            # loaded for the task and released afterwards)
+            response = await self._attach_llm_summary(response)
 
             job.status = "completed"
             job.completed_at = datetime.utcnow()
@@ -125,6 +133,8 @@ class AnalysisService:
                 overall_confidence=overall_confidence,
             )
 
+            response = await self._attach_llm_summary(response)
+
             job.status = "completed"
             job.completed_at = datetime.utcnow()
             job.result = response
@@ -163,6 +173,8 @@ class AnalysisService:
                 processing_time_ms=processing_time,
             )
 
+            response = await self._attach_llm_summary(response)
+
             job.status = "completed"
             job.completed_at = datetime.utcnow()
             job.result = response
@@ -194,6 +206,7 @@ class AnalysisService:
             tasks = []
 
             if image_bytes:
+                tasks.append(("ai_generated_image", self.ai_image_detector.detect(image_bytes)))
                 tasks.append(("image_deepfake", self.image_detector.detect(image_bytes)))
 
             if video_bytes:
@@ -226,6 +239,8 @@ class AnalysisService:
                 overall_confidence=overall_confidence,
             )
 
+            response = await self._attach_llm_summary(response)
+
             job.status = "completed"
             job.completed_at = datetime.utcnow()
             job.result = response
@@ -257,16 +272,18 @@ class AnalysisService:
                     exp["detector"] = detector_name
                     all_explanations.append(exp)
 
-        # Compute overall confidence if not provided
-        if overall_confidence is None:
-            confidences = [
-                r.get("confidence", 0) for r in results.values() if isinstance(r, dict)
-            ]
-            overall_confidence = sum(confidences) / len(confidences) if confidences else 0
-
-        # Determine overall status
-        is_suspicious = overall_confidence > settings.DEEPFAKE_THRESHOLD
-        status = "suspicious" if is_suspicious else "clean"
+        # Confidence in the REAL class is not evidence of a fake. Aggregate
+        # explicit detector verdicts, preserving abstention and missing checks.
+        verdicts = [self._detector_verdict(r) for r in results.values() if isinstance(r, dict)]
+        active = [v for v in verdicts if v != 'not_applicable']
+        status = ('suspicious' if 'suspicious' in active else
+                  'clean' if active and all(v == 'clean' for v in active) else 'inconclusive')
+        # Keep confidence for API compatibility, but only from detectors agreeing
+        # with the verdict. Metadata has no fabricated numerical confidence.
+        confidences = [r.get('confidence', 0) for r in results.values()
+                       if isinstance(r, dict) and self._detector_verdict(r) == status
+                       and not r.get('metadata_evidence')]
+        overall_confidence = max(confidences, default=0) if status != 'inconclusive' else 0
 
         return {
             "analysis_id": analysis_id,
@@ -277,6 +294,52 @@ class AnalysisService:
             "processing_time_ms": round(processing_time_ms, 2),
             "timestamp": datetime.utcnow().isoformat(),
         }
+
+    @staticmethod
+    def _detector_verdict(result):
+        explicit = result.get('status')
+        if explicit in {'suspicious', 'clean', 'not_applicable'}:
+            return explicit
+        if explicit in {'error', 'unavailable', 'inconclusive'} or result.get('error'):
+            return 'inconclusive'
+        if not result.get('confidence'):
+            return 'inconclusive'
+        for flag in ('is_deepfake', 'is_threat'):
+            if isinstance(result.get(flag), bool):
+                return 'suspicious' if result[flag] else 'clean'
+        for flag in ('is_synchronized', 'has_pulse'):
+            if isinstance(result.get(flag), bool):
+                return 'clean' if result[flag] else 'suspicious'
+        return 'inconclusive'
+
+    async def _attach_llm_summary(self, response: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Ask the local Qwen LLM for a plain-language summary of the analysis.
+        The model is loaded into VRAM for this task and unloaded again
+        afterwards (VRAM is fully released).
+        """
+        if not settings.LLM_ENABLED:
+            return response
+        try:
+            summary = await llm_manager.summarize(response)
+            if summary:
+                response["llm_summary"] = summary
+                response["explanations"].append({
+                    "type": "llm_summary",
+                    "message": summary,
+                    "severity": "info",
+                    "detector": "qwen3_4b_llm",
+                    "details": {
+                        "model": "Qwen3-4B-Instruct-2507 (Q8_0)",
+                        "backend": "llama.cpp",
+                    },
+                })
+        except Exception as e:
+            logger.warning(f"LLM summary failed (continuing without it): {e}")
+        finally:
+            # Task complete -> free VRAM
+            await asyncio.to_thread(llm_manager.unload)
+        return response
 
     async def get_status(self, analysis_id: str) -> Optional[Dict[str, Any]]:
         job = self.jobs.get(analysis_id)
@@ -296,3 +359,7 @@ class AnalysisService:
         if not job or not job.result:
             return None
         return job.result
+
+
+# Shared singleton used by the analyze + llm API routers
+analysis_service = AnalysisService()

@@ -11,7 +11,7 @@ import io
 
 import torch
 import torchvision.transforms as transforms
-from torchvision.models import efficientnet_b0, EfficientNet_B0_Weights
+from torchvision.models import efficientnet_b0
 
 from app.core.config import settings
 
@@ -30,7 +30,13 @@ class DeepfakeResult:
 class DeepfakeImageDetector:
     """
     Deepfake detection for images and video frames.
-    Uses EfficientNet-B0 with attention-based heatmap generation.
+
+    Primary path: EfficientNet-B0 classifier with trained weights loaded from
+    settings.DEEPFAKE_MODEL_WEIGHTS (state dict). If no trained weights file is
+    present, the detector falls back to a transparent heuristic algorithm
+    ensemble (FFT frequency analysis, Laplacian edge consistency, Sobel gradient
+    grid-artifact detection, eye-region asymmetry) so scanning still works.
+
     Supports both single image and video frame analysis.
     """
 
@@ -39,6 +45,7 @@ class DeepfakeImageDetector:
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.transform = None
         self.face_detector = None
+        self.model_available = False
         self._initialize_model()
 
     def _initialize_model(self):
@@ -53,17 +60,36 @@ class DeepfakeImageDetector:
             ),
         ])
 
-        # Load EfficientNet-B0 as backbone
-        try:
-            self.model = efficientnet_b0(weights=EfficientNet_B0_Weights.IMAGENET1K_V1)
-            # Replace classifier for binary classification (real vs fake)
-            self.model.classifier[1] = torch.nn.Linear(self.model.classifier[1].in_features, 2)
-            self.model.to(self.device)
-            self.model.eval()
-            logger.info(f"Deepfake model loaded on {self.device}")
-        except Exception as e:
-            logger.warning(f"Could not load EfficientNet model: {e}")
-            self.model = None
+        # Load EfficientNet-B0 backbone with *trained* binary-classifier weights.
+        # Without trained weights the classifier head is random and its output is
+        # meaningless, so we only use the network when a weights file exists.
+        weights_path = settings.DEEPFAKE_MODEL_WEIGHTS
+        if weights_path and os.path.exists(weights_path):
+            try:
+                self.model = efficientnet_b0(weights=None)
+                self.model.classifier[1] = torch.nn.Linear(
+                    self.model.classifier[1].in_features, 2
+                )
+                state_dict = torch.load(weights_path, map_location=self.device)
+                # Accept both full checkpoints and bare state dicts
+                if isinstance(state_dict, dict) and "state_dict" in state_dict:
+                    state_dict = state_dict["state_dict"]
+                self.model.load_state_dict(state_dict)
+                self.model.to(self.device)
+                self.model.eval()
+                self.model_available = True
+                logger.info(
+                    f"Deepfake model loaded from {weights_path} on {self.device}"
+                )
+            except Exception as e:
+                logger.warning(f"Could not load deepfake weights '{weights_path}': {e}")
+                self.model = None
+                self.model_available = False
+        else:
+            logger.warning(
+                f"No trained deepfake weights found at '{weights_path}'. "
+                f"Using the heuristic algorithm ensemble for scanning."
+            )
 
         # Initialize face detector (MediaPipe preferred, OpenCV fallback)
         try:
@@ -172,13 +198,14 @@ class DeepfakeImageDetector:
 
             if not faces:
                 return self._create_result(
-                    is_deepfake=False,
+                    is_deepfake=None,
                     confidence=0.0,
                     explanations=[{
                         "type": "no_face",
-                        "message": "No face detected in image",
-                        "severity": "warning"
-                    }]
+                        "message": "Face-specific checks do not apply: no face detected. Whole-image AI analysis is reported separately.",
+                        "severity": "info"
+                    }],
+                    status="not_applicable",
                 )
 
             # Analyze each face (use largest)
@@ -199,6 +226,7 @@ class DeepfakeImageDetector:
                 )
 
             # Run inference
+            heuristic_details = None
             if self.model is not None:
                 with torch.no_grad():
                     outputs = self.model(input_tensor)
@@ -206,8 +234,8 @@ class DeepfakeImageDetector:
                     fake_prob = probs[0, 1].item()
                     real_prob = probs[0, 0].item()
             else:
-                # Fallback: heuristic analysis
-                fake_prob = self._heuristic_analysis(face_crop)
+                # Fallback: heuristic algorithm ensemble
+                fake_prob, heuristic_details = self._heuristic_analysis(face_crop)
                 real_prob = 1 - fake_prob
 
             # Apply sensitivity threshold adjustment
@@ -230,6 +258,7 @@ class DeepfakeImageDetector:
                 confidence=round(confidence, 4),
                 heatmap=heatmap,
                 explanations=explanations,
+                heuristic_details=heuristic_details,
             )
 
         except Exception as e:
@@ -290,7 +319,7 @@ class DeepfakeImageDetector:
                                         probs = torch.softmax(outputs, dim=1)
                                         fake_prob = probs[0, 1].item()
                                 else:
-                                    fake_prob = self._heuristic_analysis(face_crop)
+                                    fake_prob, _ = self._heuristic_analysis(face_crop)
 
                                 frame_scores.append(fake_prob)
                                 frames_analyzed += 1
@@ -354,10 +383,12 @@ class DeepfakeImageDetector:
                 }]
             )
 
-    def _heuristic_analysis(self, face_crop: np.ndarray) -> float:
+    def _heuristic_analysis(self, face_crop: np.ndarray) -> Tuple[float, Dict[str, Any]]:
         """
-        Heuristic deepfake analysis when model is not available.
+        Heuristic deepfake analysis when no trained model is available.
         Checks for common artifacts: blending boundaries, frequency anomalies, etc.
+        Returns (score, details) where details breaks down each algorithm's
+        contribution so results can be explained to the user.
         """
         # Convert to grayscale
         gray = cv2.cvtColor(face_crop, cv2.COLOR_BGR2GRAY)
@@ -367,6 +398,7 @@ class DeepfakeImageDetector:
         gray = cv2.resize(gray, (224, 224))
 
         score = 0.0
+        details: Dict[str, Any] = {"algorithms": []}
 
         # 1. Frequency domain analysis (FFT)
         fft = np.fft.fft2(gray)
@@ -384,16 +416,21 @@ class DeepfakeImageDetector:
             hf_ratio = hf_energy / total_energy
             if hf_ratio > 0.15:  # Threshold for suspicious HF energy
                 score += 0.2
+                details["algorithms"].append("fft_high_frequency_anomaly")
+            details["fft_hf_ratio"] = round(float(hf_ratio), 4)
 
         # 2. Edge consistency (Laplacian variance)
         laplacian = cv2.Laplacian(gray, cv2.CV_64F)
         edge_variance = laplacian.var()
+        details["laplacian_variance"] = round(float(edge_variance), 2)
         # Very low variance = overly smooth (potential deepfake)
         # Very high variance = excessive sharpening artifacts
         if edge_variance < 50:
             score += 0.15
+            details["algorithms"].append("overly_smooth_texture")
         elif edge_variance > 5000:
             score += 0.1
+            details["algorithms"].append("sharpening_artifacts")
 
         # 3. Color space inconsistency (check for blending artifacts)
         lab = cv2.cvtColor(cv2.resize(face_crop, (224, 224)), cv2.COLOR_BGR2LAB)
@@ -405,12 +442,18 @@ class DeepfakeImageDetector:
         # Look for grid-like patterns in gradients
         if self._detect_grid_artifacts(grad_mag):
             score += 0.25
+            details["algorithms"].append("grid_artifacts_in_gradients")
 
         # 4. Eye region consistency (deepfakes often struggle with eyes)
         eye_score = self._analyze_eye_region(gray)
         score += eye_score * 0.2
+        details["eye_asymmetry_score"] = round(float(eye_score), 4)
+        if eye_score > 0:
+            details["algorithms"].append("eye_region_asymmetry")
 
-        return min(score, 1.0)
+        final_score = min(score, 1.0)
+        details["heuristic_score"] = round(final_score, 4)
+        return final_score, details
 
     def _radial_profile(self, image: np.ndarray, center: Tuple[int, int]) -> np.ndarray:
         """Compute radial profile of 2D image."""
@@ -490,13 +533,18 @@ class DeepfakeImageDetector:
 
         explanations.append({
             "type": "analysis_summary",
-            "message": f"Analyzed {num_faces} face(s) with sensitivity {sensitivity:.1f}",
+            "message": (
+                f"Analyzed {num_faces} face(s) with sensitivity {sensitivity:.1f} "
+                f"using {'EfficientNet-B0 model' if self.model is not None else 'heuristic algorithm ensemble'}"
+            ),
             "severity": "info",
             "details": {
                 "faces_detected": num_faces,
                 "fake_probability": round(fake_prob, 4),
                 "real_probability": round(real_prob, 4),
                 "threshold": round(settings.DEEPFAKE_THRESHOLD * (1.0 - sensitivity * 0.3), 4),
+                "model_used": "efficientnet_b0" if self.model is not None else "heuristic_ensemble",
+                "model_available": self.model_available,
             }
         })
 
@@ -591,13 +639,40 @@ class DeepfakeImageDetector:
         heatmap: Optional[np.ndarray] = None,
         explanations: List[Dict] = None,
         frame_scores: Optional[List[float]] = None,
+        heuristic_details: Optional[Dict[str, Any]] = None,
+        status: Optional[str] = None,
     ) -> Dict[str, Any]:
+        explanations = explanations or []
+        if status is None:
+            types = {item.get('type') for item in explanations}
+            if types & {'decode_error', 'processing_error', 'preprocess_error'}:
+                status = 'error'
+            elif 'no_faces_in_video' in types:
+                status = 'not_applicable'
+            elif self.model is None:
+                status = 'inconclusive'
+                explanations = [item for item in explanations if item.get('type') not in
+                                {'clean', 'deepfake_detected', 'video_clean', 'video_deepfake_detected'}]
+                explanations.append({'type': 'face_model_unavailable', 'severity': 'warning',
+                    'message': 'Trained face-manipulation weights are unavailable. Facial heuristic checks cannot establish authenticity.'})
+            else:
+                status = 'suspicious' if is_deepfake else 'clean'
+        if status in ('error', 'not_applicable', 'inconclusive'):
+            is_deepfake = None
+            confidence = 0.0
         result = {
             "detector": "deepfake_image",
+            "status": status,
             "is_deepfake": is_deepfake,
             "confidence": confidence,
-            "explanations": explanations or [],
+            "explanations": explanations,
+            # Transparency: tell the client what actually produced the verdict
+            "model_available": self.model_available,
+            "model_used": "efficientnet_b0" if self.model is not None else "heuristic_ensemble",
         }
+
+        if heuristic_details is not None:
+            result["heuristic_details"] = heuristic_details
 
         if heatmap is not None:
             # Encode heatmap as base64 for JSON transport

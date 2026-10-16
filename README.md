@@ -194,11 +194,83 @@ npm test
 
 Place model files in `backend/models/`:
 - `ppg_liveness.onnx` - PPG liveness classifier (optional)
-- `deepfake_detector.onnx` - Deepfake detection model (optional)
+- `deepfake_detector.pt` - Trained EfficientNet-B0 deepfake classifier state dict (optional).
+  Without it, image/video scanning uses the heuristic algorithm ensemble
+  (FFT frequency analysis, Laplacian edge consistency, gradient grid-artifact
+  detection, eye-region asymmetry) and reports `model_used: heuristic_ensemble`.
 - `wav2vec2_phoneme/` - Wav2Vec2 phoneme model directory
 - `viseme_classifier.onnx` - Viseme classifier (optional)
+- `llm/Qwen3-4B-Instruct-2507-Q8_0.gguf` - Local Qwen3-4B LLM (downloaded
+  automatically by `setup.bat` / `download_llm.py`, ~4 GB)
 
 Models will use heuristic fallbacks if not present.
+
+## 🧠 Local LLM (Qwen3-4B, Q8_0)
+
+TruthLens ships with a **local Qwen3-4B-Instruct-2507** model (Q8_0 GGUF, ~4 GB)
+served through llama.cpp. It fits in 8 GB VRAM and is managed by an
+**LLM manager** (`backend/app/services/llm_manager.py`):
+
+- **On-demand loading** - the model is loaded into VRAM (all layers offloaded
+  to GPU) only when an LLM task starts
+- **Automatic unload** - after each task completes, the model is destroyed and
+  VRAM is fully released (~5 GB freed)
+- **Graceful degradation** - if the model is missing or the backend is not
+  installed, scanning continues without AI explanations
+
+What it does:
+- Writes a plain-language **AI Explanation** attached to every analysis
+  (`llm_summary` field, shown in the web UI)
+- Answers follow-up questions about an analysis via `POST /api/v1/llm/ask`
+  (the "Ask AI" panel in the result view)
+
+Setup (already handled by `setup.bat`):
+```bash
+# 1. Install the llama.cpp backend (CUDA build for VRAM offload)
+pip install llama-cpp-python==0.3.36 --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124
+
+# 2. Download the model into the project folder (~4 GB)
+python backend/download_llm.py
+```
+
+LLM endpoints:
+| Method | Path | Description |
+| --- | --- | --- |
+| GET | `/api/v1/llm/status` | Model presence, load state, VRAM usage |
+| POST | `/api/v1/llm/load` | Load the model into VRAM |
+| POST | `/api/v1/llm/unload` | Unload and release VRAM |
+| POST | `/api/v1/llm/ask` | Ask a question (optionally about an analysis) |
+
+LLM settings in `.env`:
+```bash
+LLM_ENABLED=true                 # master switch
+LLM_MODEL_PATH=./models/llm/Qwen3-4B-Instruct-2507-Q8_0.gguf
+LLM_N_GPU_LAYERS=-1              # all layers offloaded to GPU
+LLM_REQUIRE_GPU=true             # reject CPU builds, partial offload, insufficient free VRAM
+LLM_VERBOSE=false                # true prints native layer/buffer placement logs
+LLM_IDLE_UNLOAD_SECONDS=0        # 0 = unload immediately after each task
+```
+
+The root `.env` is loaded regardless of the launch directory; `backend/.env`
+overrides it if present. Relative model paths are resolved from `backend/`.
+Qwen uses llama.cpp CUDA independently of PyTorch, so a CPU-only PyTorch build
+does not prevent Qwen from using the GPU. `/api/v1/llm/status` reports
+`gpu_offload_supported`, `gpu_required`, `loaded`, `execution_device`, and VRAM.
+An unloaded model is normal with immediate unload enabled.
+
+Verified on an RTX 4060 Laptop GPU (8 GB): 37/37 layers offloaded, 4076 MiB
+CUDA model buffer, 576 MiB GPU KV cache, about 5162 MiB total device usage
+while loaded, and successful text generation. The native runtime still needs
+host memory (about 394 MiB of pinned model buffers plus Python and metadata);
+GPU inference cannot mean zero system RAM. Memory mapping is disabled to avoid
+retaining a full mapped GGUF in the process. Free VRAM is checked with conservative
+headroom before loading; actual requirements vary with context and other apps.
+
+Qwen provides text explanations and follow-up answers over detector outputs.
+It does not replace trained deepfake classifier weights. Without
+`backend/models/deepfake_detector.pt`, image scanning uses the labeled heuristic
+ensemble. The optional phoneme ASR also uses its fallback if its dependencies
+or weights are unavailable. These startup warnings do not prevent image uploads.
 
 ## 🔧 Configuration
 

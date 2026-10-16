@@ -1,10 +1,9 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useDropzone } from 'react-dropzone'
-import { Upload, FileImage, FileVideo, FileText, X, Loader2, CheckCircle, AlertCircle } from 'lucide-react'
+import { Upload, FileImage, FileVideo, FileText, X, Loader2 } from 'lucide-react'
 import { cn, formatFileSize, validateFile } from '@/lib/utils'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
-import { Badge } from '@/components/ui/Badge'
 import { Progress } from '@/components/ui/Progress'
 import { Alert } from '@/components/ui/Alert'
 import { Textarea } from '@/components/ui/Textarea'
@@ -31,14 +30,18 @@ export const AnalysisUpload = ({ mode, onAnalyze }: { mode: AnalysisMode; onAnal
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [progress, setProgress] = useState(0)
-  const fileInputRef = useRef<HTMLInputElement>(null)
+  const filesRef = useRef(files)
+  filesRef.current = files
+  useEffect(() => () => {
+    filesRef.current.forEach(file => file.preview && URL.revokeObjectURL(file.preview))
+  }, [])
   const { addJob, updateJob } = useAppStore()
 
   const getAllowedTypes = () => {
     switch (mode) {
       case 'image': return ALLOWED_TYPES.image
       case 'video': return ALLOWED_TYPES.video
-      case 'multimodal': return [...ALLOWED_TYPES.image, ...ALLOWED_TYPES.video, ...ALLOWED_TYPES.audio]
+      case 'multimodal': return [...ALLOWED_TYPES.image, ...ALLOWED_TYPES.video]
       default: return []
     }
   }
@@ -56,10 +59,15 @@ export const AnalysisUpload = ({ mode, onAnalyze }: { mode: AnalysisMode; onAnal
         preview = URL.createObjectURL(file)
       }
       
-      return { ...file, preview } as FileWithPreview
+      // Keep the native File/Blob intact so FormData contains the actual bytes.
+      return Object.assign(file, { preview })
     }).filter(Boolean) as FileWithPreview[]
     
-    setFiles((prev) => [...prev, ...newFiles])
+    setFiles((prev) => {
+      if (mode === 'multimodal') return [...prev, ...newFiles]
+      prev.forEach(file => file.preview && URL.revokeObjectURL(file.preview))
+      return newFiles
+    })
     setError(null)
   }, [mode])
 
@@ -68,6 +76,11 @@ export const AnalysisUpload = ({ mode, onAnalyze }: { mode: AnalysisMode; onAnal
     accept: getAllowedTypes().reduce((acc, type) => ({ ...acc, [type]: [] }), {}),
     maxSize: MAX_FILE_SIZE,
     multiple: mode === 'multimodal',
+    disabled: isAnalyzing,
+    onDropRejected: (rejections) => setError(rejections.map(({ file, errors }) =>
+      `${file.name}: ${errors.map(error => error.code === 'file-too-large'
+        ? 'File exceeds the 100 MB limit.' : error.message).join(' ')}`
+    ).join('\n')),
   })
 
   const removeFile = (index: number) => {
@@ -79,7 +92,8 @@ export const AnalysisUpload = ({ mode, onAnalyze }: { mode: AnalysisMode; onAnal
   }
 
   const handleAnalyze = async () => {
-    if ((mode !== 'text' && files.length === 0) || (mode === 'text' && !textContent.trim())) {
+    if (isAnalyzing) return
+    if ((mode === 'image' || mode === 'video') ? files.length === 0 : !files.length && !textContent.trim()) {
       setError('Please provide input to analyze')
       return
     }
@@ -90,7 +104,7 @@ export const AnalysisUpload = ({ mode, onAnalyze }: { mode: AnalysisMode; onAnal
 
     const jobId = addJob({
       type: mode,
-      status: 'pending',
+      status: 'processing',
       progress: 0,
     })
 
@@ -197,7 +211,7 @@ export const AnalysisUpload = ({ mode, onAnalyze }: { mode: AnalysisMode; onAnal
   return (
     <Card className={cn('p-6', isDragActive && 'border-primary-500 bg-primary-50')}>
       <div {...getRootProps()} className={cn('relative', isDragActive && 'border-primary-500 bg-primary-50')}>
-        <input {...getInputProps()} ref={fileInputRef} />
+        <input {...getInputProps()} aria-label="Choose files" />
         
         <div className="text-center py-8">
           {mode === 'image' && <FileImage className="w-12 h-12 text-gray-300 mx-auto mb-3" />}
@@ -208,11 +222,12 @@ export const AnalysisUpload = ({ mode, onAnalyze }: { mode: AnalysisMode; onAnal
             {mode === 'image' ? 'Image Analysis' : mode === 'video' ? 'Video Analysis' : 'Multimodal Analysis'}
           </h3>
           <p className="text-sm text-gray-500 mt-1">
-            {isDragActive ? 'Drop files here...' : `Drag & drop or click to upload ${mode === 'multimodal' ? 'images, videos, or audio' : mode === 'image' ? 'an image' : 'a video'}`}
+            {isDragActive ? 'Drop files here...' : `Drag & drop or click to upload ${mode === 'multimodal' ? 'images or videos' : mode === 'image' ? 'an image' : 'a video'}`}
           </p>
           <p className="text-xs text-gray-400 mt-2">
             Max size: {formatFileSize(MAX_FILE_SIZE)} • Allowed: {getAllowedTypes().map(t => t.split('/')[1]).join(', ')}
           </p>
+          {mode === 'image' && <p className="text-sm text-gray-500 mt-2">Checks the whole image for AI generation, including artwork and scenes without faces.</p>}
         </div>
       </div>
 
@@ -243,6 +258,7 @@ export const AnalysisUpload = ({ mode, onAnalyze }: { mode: AnalysisMode; onAnal
                   variant="ghost"
                   size="sm"
                   onClick={() => removeFile(index)}
+                  disabled={isAnalyzing}
                   aria-label="Remove file"
                 >
                   <X className="w-4 h-4" />
@@ -253,6 +269,10 @@ export const AnalysisUpload = ({ mode, onAnalyze }: { mode: AnalysisMode; onAnal
         </div>
       )}
 
+      {mode === 'multimodal' && (
+        <Textarea label="Text Content" value={textContent} onChange={e => setTextContent(e.target.value)}
+          placeholder="Optional text to analyze with your files" rows={4} disabled={isAnalyzing} />
+      )}
       {error && <Alert variant="danger" className="mt-4">{error}</Alert>}
 
       {isAnalyzing && (
@@ -265,7 +285,7 @@ export const AnalysisUpload = ({ mode, onAnalyze }: { mode: AnalysisMode; onAnal
       <div className="mt-6 flex justify-end">
         <Button
           onClick={handleAnalyze}
-          disabled={isAnalyzing || files.length === 0}
+          disabled={isAnalyzing || (files.length === 0 && !(mode === 'multimodal' && textContent.trim()))}
           loading={isAnalyzing}
           size="lg"
         >

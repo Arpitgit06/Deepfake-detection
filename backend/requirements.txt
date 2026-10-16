@@ -26,6 +26,11 @@ transformers==4.37.0
 langdetect==1.0.9
 regex==2023.12.25
 
+# LLM (Qwen3-4B Q8_0 GGUF) - managed by llama.cpp
+# llama-cpp-python is installed by setup.bat (CUDA build for VRAM offload).
+# Manual install: pip install llama-cpp-python==0.3.36 --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124
+huggingface_hub>=0.20.0
+
 # Utilities & Infrastructure
 requests==2.31.0
 aiohttp==3.9.1

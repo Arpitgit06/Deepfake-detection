@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from urllib.parse import urlparse
 import asyncio
 
+from app.core.config import settings
+
 logger = logging.getLogger(__name__)
 
 

@@ -11,7 +11,13 @@ export const api = axios.create({
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    const message = error.response?.data?.detail || error.message || 'An error occurred'
+    const detail = error.response?.data?.detail
+    const message = Array.isArray(detail)
+      ? detail.map(item => `${item.loc?.join('.') || 'Input'}: ${item.msg}`).join('; ')
+      : typeof detail === 'string' ? detail
+      : !error.response || error.response.status === 502
+        ? 'Cannot reach the analysis server. Start the backend on port 8000 and try again.'
+        : error.message || 'An error occurred'
     return Promise.reject(new Error(message))
   }
 )
@@ -87,6 +93,29 @@ export const getAnalysisStatus = async (analysisId: string) => {
 
 export const getAnalysisReport = async (analysisId: string) => {
   const response = await api.get(`/analyze/${analysisId}/report`)
+  return response.data
+}
+
+// ---- LLM (local Qwen3-4B, managed lifecycle) ----
+
+export interface LLMAskResponse {
+  answer: string | null
+  model_used: string
+  vram_freed_mb: number | null
+}
+
+export const askLLM = async (analysisId: string, question: string): Promise<LLMAskResponse> => {
+  const response = await api.post('/llm/ask', { analysis_id: analysisId, question })
+  return response.data
+}
+
+export const llmStatus = async () => {
+  const response = await api.get('/llm/status')
+  return response.data
+}
+
+export const llmUnload = async () => {
+  const response = await api.post('/llm/unload')
   return response.data
 }
 

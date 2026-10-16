@@ -1,12 +1,14 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
 from app.core.config import settings
-from app.api import analyze, health
+from app.api import analyze, health, llm
 from app.core.logging import setup_logging
+from app.services.llm_manager import llm_manager
 
 
 @asynccontextmanager
@@ -17,6 +19,8 @@ async def lifespan(app: FastAPI):
     yield
     # Shutdown
     logging.info("Shutting down...")
+    # Make sure the LLM is unloaded and VRAM is released
+    await asyncio.to_thread(llm_manager.unload)
 
 
 app = FastAPI(
@@ -49,6 +53,7 @@ async def global_exception_handler(request, exc):
 # Routes
 app.include_router(health.router, prefix=settings.API_V1_PREFIX)
 app.include_router(analyze.router, prefix=settings.API_V1_PREFIX)
+app.include_router(llm.router, prefix=settings.API_V1_PREFIX)
 
 
 @app.get("/")

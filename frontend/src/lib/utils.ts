@@ -20,6 +20,12 @@ export const formatConfidence = (confidence: number): string => {
   return `${(confidence * 100).toFixed(1)}%`
 }
 
+export const verdictLabel = (status: string): string => ({
+  suspicious: 'Suspicious', clean: 'No indicators detected',
+  inconclusive: 'Inconclusive', unavailable: 'Unavailable',
+  error: 'Analysis error', not_applicable: 'Not applicable',
+}[status] || 'Inconclusive')
+
 export const getConfidenceColor = (confidence: number): string => {
   if (confidence >= 0.8) return 'text-danger-600'
   if (confidence >= 0.6) return 'text-warning-600'

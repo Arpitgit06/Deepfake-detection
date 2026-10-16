@@ -1,8 +1,8 @@
 import { cn } from '@/lib/utils'
 import { ReactNode } from 'react'
+import { Link } from 'react-router-dom'
 import { 
-  Shield, Brain, Heart, Mic, Search, 
-  Github, Twitter, Menu, X, Sun, Moon
+  Shield, Brain, Mic, Search, Menu, Sun, Moon
 } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { useAppStore } from '@/store/appStore'
@@ -12,7 +12,7 @@ interface LayoutProps {
 }
 
 export const Layout = ({ children }: LayoutProps) => {
-  const { theme, toggleSidebar } = useAppStore()
+  const { theme, setTheme, toggleSidebar } = useAppStore()
 
   return (
     <div className={cn('min-h-screen bg-gray-50', theme === 'dark' && 'dark')}>
@@ -46,15 +46,11 @@ export const Layout = ({ children }: LayoutProps) => {
 
             {/* Actions */}
             <div className="flex items-center gap-2">
-              <Button variant="ghost" size="sm" onClick={() => {}}>
-                <Sun className="w-4 h-4" />
+              <Button variant="ghost" size="sm" aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`}
+                onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>
+                {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
               </Button>
-              <Button variant="ghost" size="sm" onClick={() => {}}>
-                <Github className="w-4 h-4" />
-              </Button>
-              <Button variant="ghost" size="sm" onClick={() => {}}>
-                <Twitter className="w-4 h-4" />
-              </Button>
+              <Link to="/about" className="px-3 py-1.5 text-sm text-gray-600 rounded-lg hover:bg-gray-100">About</Link>
             </div>
           </div>
         </div>

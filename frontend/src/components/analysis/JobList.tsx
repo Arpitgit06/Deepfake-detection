@@ -1,4 +1,4 @@
-import { cn } from '@/lib/utils'
+import { cn, verdictLabel } from '@/lib/utils'
 import { Card } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
 import { Progress } from '@/components/ui/Progress'
@@ -76,13 +76,14 @@ const JobItem = ({ job, isActive }: JobItemProps) => {
 
   return (
     <Card
+      padding="none"
       className={cn(
         'cursor-pointer transition-all',
         isActive ? 'border-primary-500 bg-primary-50' : 'hover:border-primary-300'
       )}
       onClick={handleClick}
     >
-      <div className="flex items-center gap-4 p-4">
+      <div className="flex items-center gap-3 p-4">
         <div className={cn('p-2 rounded-lg', job.status === 'processing' ? 'bg-primary-100' : 'bg-gray-100')}>
           <TypeIcon className="w-5 h-5 text-gray-600" />
         </div>
@@ -103,13 +104,13 @@ const JobItem = ({ job, isActive }: JobItemProps) => {
           )}
           
           {job.status === 'completed' && job.result && (
-            <div className="mt-2 flex items-center gap-4 text-sm text-gray-500">
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-gray-500">
               <span className="flex items-center gap-1">
-                <span className={cn('font-semibold', job.result.status === 'suspicious' ? 'text-danger-600' : 'text-success-600')}>
-                  {job.result.status.toUpperCase()}
+                <span className={cn('font-semibold', job.result.status === 'suspicious' ? 'text-danger-600' : job.result.status === 'clean' ? 'text-success-600' : 'text-warning-600')}>
+                  {verdictLabel(job.result.status)}
                 </span>
               </span>
-              <span>Confidence: {(job.result.confidence * 100).toFixed(1)}%</span>
+              {job.result.confidence > 0 && job.result.status !== 'inconclusive' && <span>Confidence: {(job.result.confidence * 100).toFixed(1)}%</span>}
               <span>{new Date(job.createdAt).toLocaleTimeString()}</span>
             </div>
           )}
@@ -171,8 +172,8 @@ export const JobHistory = () => {
                 </div>
                 <div className="flex items-center gap-3">
                   {job.result && (
-                    <Badge variant={job.result.status === 'suspicious' ? 'danger' : 'success'} size="sm">
-                      {job.result.status}
+                    <Badge variant={job.result.status === 'suspicious' ? 'danger' : job.result.status === 'clean' ? 'success' : 'warning'} size="sm">
+                      {verdictLabel(job.result.status)}
                     </Badge>
                   )}
                   <button

@@ -156,6 +156,25 @@ python -m spacy download en_core_web_sm >/dev/null 2>&1 && print_ok "spaCy model
 mkdir -p "$MODELS_DIR"
 print_ok "Models directory ready"
 
+# ============================================================================
+# LLM Setup (Qwen3-4B-Instruct-2507, Q8_0 GGUF via llama.cpp)
+# ============================================================================
+print_step "Setting Up Local LLM (Qwen3-4B Q8_0, ~4 GB)"
+
+print_info "Installing llama-cpp-python (CUDA build when available)..."
+CMAKE_ARGS="" pip install llama-cpp-python==0.3.36 --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124 >/dev/null 2>&1 \
+    && print_ok "llama-cpp-python installed (CUDA)" \
+    || {
+        pip install llama-cpp-python >/dev/null 2>&1 \
+            && print_ok "llama-cpp-python installed (CPU build)" \
+            || print_warn "Failed to install llama-cpp-python - LLM features disabled"
+    }
+
+print_info "Downloading Qwen3-4B-Instruct-2507 Q8_0 into backend/models/llm/ ..."
+python "$BACKEND_DIR/download_llm.py" \
+    && print_ok "Qwen3-4B (Q8_0) ready in the project models folder" \
+    || print_warn "LLM download incomplete - scanning still works without it. Re-run setup.sh later."
+
 deactivate
 
 # ============================================================================

@@ -5,14 +5,11 @@ from typing import List, Optional, Dict, Any
 import uuid
 import logging
 
-from app.services.analysis_service import AnalysisService
+from app.services.analysis_service import AnalysisService, analysis_service
 from app.core.config import settings
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
-
-# Initialize service
-analysis_service = AnalysisService()
 
 
 class AnalysisResult(BaseModel):
@@ -22,6 +19,8 @@ class AnalysisResult(BaseModel):
     confidence: float
     explanations: List[Dict[str, Any]]
     processing_time_ms: float
+    timestamp: str
+    llm_summary: Optional[str] = None
 
 
 class ImageAnalysisRequest(BaseModel):

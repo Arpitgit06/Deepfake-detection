@@ -2,6 +2,19 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Shared surfaces retain readable contrast when the theme control is used. */
+.dark { color-scheme: dark; }
+.dark, .dark .bg-gray-50 { background-color: #111827; }
+.dark .bg-white, .dark .bg-white\/80 { background-color: #1f2937; }
+.dark .bg-gray-100 { background-color: #374151; }
+.dark .text-gray-900, .dark .text-gray-800 { color: #f3f4f6; }
+.dark .text-gray-700, .dark .text-gray-600, .dark .text-gray-500 { color: #cbd5e1; }
+.dark .border-gray-200, .dark .border-gray-300 { border-color: #475569; }
+.dark input, .dark textarea { background-color: #1f2937; color: #f3f4f6; }
+.dark .bg-primary-50 { background-color: #0c4a6e; }
+.dark .bg-primary-50.text-primary-700, .dark .bg-primary-50.text-primary-800 { color: #e0f2fe; }
+.dark .hover\:bg-gray-100:hover { background-color: #374151; }
+
 @layer base {
   * {
     @apply border-gray-200;

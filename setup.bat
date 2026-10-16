@@ -154,6 +154,41 @@ if not exist "%MODELS_DIR%" (
     call :print_color "%GREEN%" "[OK] Created models directory"
 )
 
+call :print_color "%BLUE%" "[INFO] Installing llama-cpp-python (llama.cpp backend for the Qwen LLM)..."
+call :print_color "%BLUE%" "[INFO]   Trying CUDA 12.4 build first (loads the model into VRAM)..."
+call "%VENV_DIR%\Scripts\python.exe" -m pip install llama-cpp-python==0.3.36 --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124 >nul 2>&1
+if errorlevel 1 (
+    call :print_color "%YELLOW%" "[WARN] CUDA build failed - falling back to CPU build (LLM will run on CPU)"
+    call "%VENV_DIR%\Scripts\python.exe" -m pip install llama-cpp-python >nul 2>&1
+    if errorlevel 1 (
+        call :print_color "%RED%" "[ERROR] Failed to install llama-cpp-python"
+        goto :error_exit
+    )
+    call :print_color "%GREEN%" "[OK] llama-cpp-python installed (CPU build)"
+) else (
+    call :print_color "%GREEN%" "[OK] llama-cpp-python installed (CUDA 12.4 build - GPU accelerated)"
+)
+
+echo.
+echo %CYAN%=====================================================================%RESET%
+echo %CYAN%  Downloading Qwen3-4B LLM (Q8_0, ~4 GB) into project folder       %RESET%
+echo %CYAN%=====================================================================%RESET%
+echo.
+
+call :print_color "%BLUE%" "[INFO] Model: Qwen3-4B-Instruct-2507 Q8_0 (fits 8 GB VRAM)"
+call :print_color "%BLUE%" "[INFO] Destination: %BACKEND_DIR%\models\llm\"
+call :print_color "%BLUE%" "[INFO] The download resumes automatically if interrupted."
+echo.
+
+call "%VENV_DIR%\Scripts\python.exe" "%BACKEND_DIR%\download_llm.py"
+if errorlevel 1 (
+    call :print_color "%YELLOW%" "[WARN] LLM download did not complete."
+    call :print_color "%YELLOW%" "[WARN] The app still works - scanning runs without the LLM."
+    call :print_color "%YELLOW%" "[WARN] Re-run setup.bat later or run: backend\download_llm.py"
+) else (
+    call :print_color "%GREEN%" "[OK] Qwen3-4B (Q8_0) is ready in the project models folder"
+)
+
 call "%VENV_DIR%\Scripts\deactivate.bat" 2>nul
 cd /d "%PROJECT_ROOT%"
 echo.
