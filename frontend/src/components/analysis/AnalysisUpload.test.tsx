@@ -14,6 +14,13 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.restoreAllMocks() })
 
 describe('analysis interaction regressions', () => {
+  it('opens the picker once from the visible Browse files button', () => {
+    render(<AnalysisUpload mode="video" onAnalyze={vi.fn()} />)
+    const input = screen.getByLabelText('Choose files') as HTMLInputElement
+    const click = vi.spyOn(input, 'click')
+    fireEvent.click(screen.getByRole('button', { name: 'Browse files' }))
+    expect(click).toHaveBeenCalledOnce()
+  })
   it('opens the native picker when the upload area is clicked', () => {
     render(<AnalysisUpload mode="image" onAnalyze={vi.fn()} />)
     const input = screen.getByLabelText('Choose files') as HTMLInputElement

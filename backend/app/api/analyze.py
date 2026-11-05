@@ -1,11 +1,10 @@
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, BackgroundTasks
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional, Dict, Any
 import uuid
 import logging
 
-from app.services.analysis_service import AnalysisService, analysis_service
+from app.services.analysis_service import analysis_service
 from app.core.config import settings
 
 router = APIRouter()
@@ -21,6 +20,9 @@ class AnalysisResult(BaseModel):
     processing_time_ms: float
     timestamp: str
     llm_summary: Optional[str] = None
+    evidence_report: Optional[Dict[str, Any]] = None
+    llm_review: Optional[Dict[str, Any]] = None
+    explanation_source: Optional[str] = None
 
 
 class ImageAnalysisRequest(BaseModel):
@@ -37,11 +39,18 @@ class VideoAnalysisRequest(BaseModel):
 
 
 class TextAnalysisRequest(BaseModel):
-    text: str
+    text: str = Field(min_length=1)
     analysis_id: Optional[str] = None
     language: Optional[str] = None
     extract_entities: bool = True
     check_threat_intel: bool = True
+
+    @field_validator('text')
+    @classmethod
+    def require_content(cls, value):
+        if not value.strip():
+            raise ValueError('Please provide text to analyze')
+        return value
 
 
 class MultimodalAnalysisRequest(BaseModel):
@@ -49,22 +58,31 @@ class MultimodalAnalysisRequest(BaseModel):
     text_content: Optional[str] = None
 
 
+async def read_upload(file: UploadFile, allowed_types: List[str]) -> bytes:
+    if file.content_type not in allowed_types:
+        raise HTTPException(400, f"Unsupported file type: {file.content_type}")
+    contents = await file.read(settings.MAX_FILE_SIZE + 1)
+    if len(contents) > settings.MAX_FILE_SIZE:
+        raise HTTPException(413, 'File exceeds the 100 MB limit')
+    if not contents:
+        raise HTTPException(400, 'The uploaded file is empty')
+    return contents
+
+
 @router.post("/analyze/image", response_model=AnalysisResult)
 async def analyze_image(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     return_heatmap: bool = Form(False),
-    sensitivity: float = Form(0.5),
+    sensitivity: float = Form(0.5, ge=0, le=1),
 ):
     """Analyze an image for deepfake/manipulation indicators."""
-    if file.content_type not in settings.ALLOWED_IMAGE_TYPES:
-        raise HTTPException(400, f"Unsupported file type: {file.content_type}")
+    contents = await read_upload(file, settings.ALLOWED_IMAGE_TYPES)
 
     analysis_id = str(uuid.uuid4())
     logger.info(f"Starting image analysis: {analysis_id}")
 
     try:
-        contents = await file.read()
         result = await analysis_service.analyze_image(
             image_bytes=contents,
             analysis_id=analysis_id,
@@ -83,17 +101,15 @@ async def analyze_video(
     file: UploadFile = File(...),
     enable_ppg: bool = Form(True),
     enable_phoneme_viseme: bool = Form(True),
-    sample_rate: int = Form(5),
+    sample_rate: int = Form(5, ge=1, le=30),
 ):
     """Analyze a video with PPG liveness and phoneme-viseme synchronization."""
-    if file.content_type not in settings.ALLOWED_VIDEO_TYPES:
-        raise HTTPException(400, f"Unsupported file type: {file.content_type}")
+    contents = await read_upload(file, settings.ALLOWED_VIDEO_TYPES)
 
     analysis_id = str(uuid.uuid4())
     logger.info(f"Starting video analysis: {analysis_id}")
 
     try:
-        contents = await file.read()
         result = await analysis_service.analyze_video(
             video_bytes=contents,
             analysis_id=analysis_id,
@@ -137,19 +153,21 @@ async def analyze_multimodal(
     analysis_id: Optional[str] = Form(None),
 ):
     """Combined multimodal analysis."""
+    if audio is not None:
+        raise HTTPException(400, 'Standalone audio scanning is not supported. Upload a video with its audio track.')
+    if image is None and video is None and not (text_content and text_content.strip()):
+        raise HTTPException(400, 'Provide an image, video, or text to analyze')
+    image_bytes = await read_upload(image, settings.ALLOWED_IMAGE_TYPES) if image else None
+    video_bytes = await read_upload(video, settings.ALLOWED_VIDEO_TYPES) if video else None
     analysis_id = analysis_id or str(uuid.uuid4())
     logger.info(f"Starting multimodal analysis: {analysis_id}")
 
     try:
-        image_bytes = await image.read() if image else None
-        video_bytes = await video.read() if video else None
-        audio_bytes = await audio.read() if audio else None
 
         result = await analysis_service.analyze_multimodal(
             analysis_id=analysis_id,
             image_bytes=image_bytes,
             video_bytes=video_bytes,
-            audio_bytes=audio_bytes,
             text_content=text_content,
         )
         return result

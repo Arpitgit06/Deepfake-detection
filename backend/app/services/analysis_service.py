@@ -12,6 +12,9 @@ from app.detectors.financial_threat import FinancialThreatDetector
 from app.detectors.deepfake_image import DeepfakeImageDetector
 from app.detectors.ai_generated_image import AIGeneratedImageDetector
 from app.services.llm_manager import llm_manager
+from app.services.evidence_report import build_evidence_report
+from app.detectors.ai_generated_video import detect_video_ai
+from app.detectors.image_reliability import explain_unreliable_media
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -49,7 +52,7 @@ class AnalysisService:
 
         try:
             # Full-image classification always runs, with or without faces.
-            ai_result = await self.ai_image_detector.detect(image_bytes)
+            ai_result = await self.ai_image_detector.detect(image_bytes, explain_regions=return_heatmap)
             result = await self.image_detector.detect(
                 image_bytes=image_bytes,
                 sensitivity=sensitivity,
@@ -68,6 +71,8 @@ class AnalysisService:
             # Local Qwen LLM explains the result in plain language (VRAM is
             # loaded for the task and released afterwards)
             response = await self._attach_llm_summary(response)
+
+            response['processing_time_ms'] = round((time.time() - start_time) * 1000, 2)
 
             job.status = "completed"
             job.completed_at = datetime.utcnow()
@@ -95,6 +100,8 @@ class AnalysisService:
             results = {}
             all_explanations = []
             all_confidences = []
+
+            results['ai_generated_video'] = await detect_video_ai(self.ai_image_detector, video_bytes)
 
             # Run PPG Liveness Detection
             if enable_ppg:
@@ -135,6 +142,7 @@ class AnalysisService:
 
             response = await self._attach_llm_summary(response)
 
+            response['processing_time_ms'] = round((time.time() - start_time) * 1000, 2)
             job.status = "completed"
             job.completed_at = datetime.utcnow()
             job.result = response
@@ -169,12 +177,14 @@ class AnalysisService:
 
             response = self._format_response(
                 analysis_id=analysis_id,
-                results={"financial_threat": result},
+                results={"financial_threat": result,
+                         "llm_text_review": await llm_manager.scan_text(text, result)},
                 processing_time_ms=processing_time,
             )
 
             response = await self._attach_llm_summary(response)
 
+            response['processing_time_ms'] = round((time.time() - start_time) * 1000, 2)
             job.status = "completed"
             job.completed_at = datetime.utcnow()
             job.result = response
@@ -210,6 +220,7 @@ class AnalysisService:
                 tasks.append(("image_deepfake", self.image_detector.detect(image_bytes)))
 
             if video_bytes:
+                tasks.append(("ai_generated_video", detect_video_ai(self.ai_image_detector, video_bytes)))
                 tasks.append(("video_ppg", self.ppg_detector.detect(video_bytes)))
                 tasks.append(("video_phoneme_viseme", self.phoneme_viseme_detector.detect(video_bytes)))
                 tasks.append(("video_deepfake", self.image_detector.detect_video_frames(video_bytes)))
@@ -228,6 +239,9 @@ class AnalysisService:
                     logger.error(f"Detection {name} failed: {e}")
                     results[name] = {"error": str(e), "confidence": 0}
 
+            if text_content and 'financial_threat' in results:
+                results['llm_text_review'] = await llm_manager.scan_text(text_content, results['financial_threat'])
+
             processing_time = (time.time() - start_time) * 1000
 
             overall_confidence = sum(all_confidences) / len(all_confidences) if all_confidences else 0
@@ -241,6 +255,7 @@ class AnalysisService:
 
             response = await self._attach_llm_summary(response)
 
+            response['processing_time_ms'] = round((time.time() - start_time) * 1000, 2)
             job.status = "completed"
             job.completed_at = datetime.utcnow()
             job.result = response
@@ -278,11 +293,23 @@ class AnalysisService:
         active = [v for v in verdicts if v != 'not_applicable']
         status = ('suspicious' if 'suspicious' in active else
                   'clean' if active and all(v == 'clean' for v in active) else 'inconclusive')
+        # Opposing contextual and rule verdicts need review, not an arbitrary
+        # weighted score or an LLM silently overriding measured evidence.
+        if 'llm_text_review' in results:
+            rule = self._detector_verdict(results.get('financial_threat', {}))
+            review = self._detector_verdict(results['llm_text_review'])
+            other_suspicious = any(self._detector_verdict(value) == 'suspicious'
+                                   for name, value in results.items()
+                                   if name not in ('financial_threat', 'llm_text_review'))
+            if {rule, review} == {'clean', 'suspicious'} and not other_suspicious:
+                status = 'inconclusive'
         # Keep confidence for API compatibility, but only from detectors agreeing
         # with the verdict. Metadata has no fabricated numerical confidence.
         confidences = [r.get('confidence', 0) for r in results.values()
                        if isinstance(r, dict) and self._detector_verdict(r) == status
-                       and not r.get('metadata_evidence')]
+                       and (not r.get('metadata_evidence') or
+                            (r.get('ai_probability') is not None and
+                             r['ai_probability'] >= settings.AI_IMAGE_FAKE_THRESHOLD))]
         overall_confidence = max(confidences, default=0) if status != 'inconclusive' else 0
 
         return {
@@ -290,6 +317,7 @@ class AnalysisService:
             "status": status,
             "confidence": round(overall_confidence, 4),
             "results": results,
+            "evidence_report": build_evidence_report(results),
             "explanations": all_explanations,
             "processing_time_ms": round(processing_time_ms, 2),
             "timestamp": datetime.utcnow().isoformat(),
@@ -297,6 +325,8 @@ class AnalysisService:
 
     @staticmethod
     def _detector_verdict(result):
+        if result.get('verdict_eligible') is False:
+            return 'inconclusive'
         explicit = result.get('status')
         if explicit in {'suspicious', 'clean', 'not_applicable'}:
             return explicit
@@ -318,9 +348,19 @@ class AnalysisService:
         The model is loaded into VRAM for this task and unloaded again
         afterwards (VRAM is fully released).
         """
+        fallback = explain_unreliable_media(response['results'])
+        non_media_threat = any(self._detector_verdict(value) == 'suspicious'
+                              for name, value in response['results'].items()
+                              if name not in ('ai_generated_image', 'ai_generated_video'))
+        if fallback and not non_media_threat and 'financial_threat' not in response['results']:
+            response['llm_summary'] = fallback
+            response['explanation_source'] = 'measured_findings'
+            return response
         if not settings.LLM_ENABLED:
             return response
         try:
+            if any(name in response['results'] for name in ('ai_generated_image', 'ai_generated_video')):
+                response['llm_review'] = await llm_manager.review_media_evidence(response)
             summary = await llm_manager.summarize(response)
             if summary:
                 response["llm_summary"] = summary

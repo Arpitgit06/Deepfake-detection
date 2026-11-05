@@ -27,6 +27,7 @@ def image_bytes(source_type=None):
 @pytest.mark.parametrize('score,status,generated', [(0.97, 'suspicious', True),
                          (0.02, 'clean', False), (0.5, 'inconclusive', None)])
 async def test_whole_image_without_faces(monkeypatch, score, status, generated):
+    monkeypatch.setattr(settings, 'AI_IMAGE_EXPERIMENTAL_VERDICTS', True)
     detector = AIGeneratedImageDetector()
     seen = []
     def predict(image):
@@ -43,11 +44,13 @@ async def test_whole_image_without_faces(monkeypatch, score, status, generated):
 
 @pytest.mark.asyncio
 async def test_ai_edit_metadata_is_not_claimed_as_full_generation(monkeypatch):
+    monkeypatch.setattr(settings, 'AI_IMAGE_EXPERIMENTAL_VERDICTS', False)
     detector = AIGeneratedImageDetector()
     monkeypatch.setattr(detector, '_predict', lambda _: 0.02)
     result = await detector.detect(image_bytes('compositeWithTrainedAlgorithmicMedia'))
-    assert result['status'] == 'suspicious'
-    assert result['ai_probability'] == 0.02
+    assert result['status'] == 'inconclusive'
+    assert result['ai_probability'] is None
+    assert result['raw_model_score'] == 0.02
     assert result['metadata_evidence'][0]['verified'] is False
     assert result['metadata_evidence'][0]['description'] == 'Generative-AI editing declared'
 
@@ -79,6 +82,7 @@ def test_metadata_parser_ignores_comments_and_unknown_namespaces():
 
 @pytest.mark.asyncio
 async def test_face_skip_does_not_skip_whole_image(monkeypatch):
+    monkeypatch.setattr(settings, 'AI_IMAGE_EXPERIMENTAL_VERDICTS', False)
     monkeypatch.setattr(settings, 'LLM_ENABLED', False)
     service = AnalysisService.__new__(AnalysisService)
     service.jobs = {}
@@ -90,10 +94,11 @@ async def test_face_skip_does_not_skip_whole_image(monkeypatch):
     monkeypatch.setattr(face, '_detect_faces', lambda _: [])
     service.image_detector = face
     response = await service.analyze_image(image_bytes(), 'no-faces')
-    assert response['status'] == 'suspicious'
+    assert response['status'] == 'inconclusive'
     assert response['results']['image_deepfake']['status'] == 'not_applicable'
     assert response['results']['image_deepfake']['is_deepfake'] is None
-    assert response['results']['ai_generated_image']['ai_probability'] == 0.95
+    assert response['results']['ai_generated_image']['ai_probability'] is None
+    assert response['results']['ai_generated_image']['raw_model_score'] == 0.95
 
 
 @pytest.mark.parametrize('detectors,expected', [

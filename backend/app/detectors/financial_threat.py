@@ -252,8 +252,10 @@ class FinancialThreatDetector:
             risk_score = self._compute_risk_score(entities, tactics, suspicious_flags, threat_intel)
             
             # Determine threat level
-            is_threat = risk_score > settings.FINANCIAL_THREAT_THRESHOLD
-            confidence = risk_score if is_threat else (1.0 - risk_score)
+            status = ('suspicious' if risk_score >= .7 else
+                      'inconclusive' if risk_score > .3 or tactics else 'clean')
+            is_threat = None if status == 'inconclusive' else status == 'suspicious'
+            confidence = 0 if is_threat is None else risk_score if is_threat else (1.0 - risk_score)
             
             # Generate explanations
             explanations = self._generate_explanations(
@@ -262,9 +264,11 @@ class FinancialThreatDetector:
 
             return {
                 "detector": "financial_threat",
+                "status": status,
                 "is_threat": is_threat,
                 "confidence": round(confidence, 4),
                 "risk_score": round(risk_score, 4),
+                "score_basis": self._score_contributions(entities, tactics, suspicious_flags, threat_intel),
                 "threat_level": self._risk_to_level(risk_score),
                 "entities": entities,
                 "tactics": [t.__dict__ for t in tactics],
@@ -410,8 +414,9 @@ class FinancialThreatDetector:
         for tactic_name, tactic_info in self.TACTICS.items():
             matches = []
             for keyword in tactic_info["keywords"]:
-                if keyword.lower() in text_lower:
-                    matches.append(keyword)
+                match = re.search(r'(?<!\w)' + re.escape(keyword) + r'(?!\w)', text, re.IGNORECASE)
+                if match:
+                    matches.append(match.group())
             
             if matches:
                 # Confidence based on number of matches and weight
@@ -473,6 +478,8 @@ class FinancialThreatDetector:
         # - Blockchain analytics (Chainalysis, CipherTrace)
         
         results = {
+            "status": "not_configured",
+            "note": "External threat intelligence is not configured. URL patterns are local heuristics, not verified reputation checks.",
             "checked_entities": 0,
             "malicious_entities": [],
             "suspicious_entities": [],
@@ -481,11 +488,10 @@ class FinancialThreatDetector:
         
         for entity in entities:
             if entity["type"] in ["url", "domain", "ip", "crypto_btc", "crypto_eth", "email"]:
-                results["checked_entities"] += 1
                 
                 # Simulate threat intel check
                 # In reality, make async HTTP calls to threat intel APIs
-                is_malicious = await self._mock_threat_check(entity)
+                is_malicious = False
                 
                 if is_malicious:
                     results["malicious_entities"].append({
@@ -498,8 +504,6 @@ class FinancialThreatDetector:
                         "entity": entity,
                         "reason": "heuristic_flags",
                     })
-                else:
-                    results["clean_entities"].append(entity)
         
         return results
 
@@ -569,6 +573,23 @@ class FinancialThreatDetector:
         
         # Cap at 1.0
         return min(score, 1.0)
+
+    def _score_contributions(self, entities, tactics, flags, intel):
+        """Explain the exact additive heuristic, including saturation at 100%."""
+        items = []
+        for entity in entities:
+            amount = self._compute_risk_score([entity], [], [], {})
+            items.append({'source': entity['type'], 'evidence': entity['value'], 'points': round(amount * 100, 2)})
+        for tactic in tactics:
+            items.append({'source': tactic.name, 'evidence': ', '.join(tactic.evidence),
+                          'points': round(tactic.confidence * .12 * 100, 2)})
+        for flag in flags:
+            amount = self._compute_risk_score([], [], [flag], {})
+            items.append({'source': flag['type'], 'evidence': ', '.join(flag.get('examples', [])),
+                          'points': round(amount * 100, 2)})
+        for item in intel.get('suspicious_entities', []):
+            items.append({'source': 'local_url_pattern', 'evidence': item['entity']['value'], 'points': 10.0})
+        return items
 
     def _risk_to_level(self, risk_score: float) -> str:
         if risk_score >= 0.8:

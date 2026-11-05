@@ -5,6 +5,7 @@ import logging
 
 from app.services.llm_manager import llm_manager
 from app.services.analysis_service import analysis_service
+from app.detectors.image_reliability import explain_unreliable_media
 
 router = APIRouter(tags=["llm"])
 logger = logging.getLogger(__name__)
@@ -72,6 +73,8 @@ async def llm_ask(request: AskRequest):
 
     return AskResponse(
         answer=answer,
-        model_used="qwen3-4b-instruct-2507-q8_0",
-        vram_freed_mb=llm_manager._last_unload_vram_mb,
+        model_used=("measured-findings" if analysis and
+                    not any(name in analysis.get('results', {}) for name in ('financial_threat', 'llm_text_review')) and
+                    explain_unreliable_media(analysis.get('results', {})) else "qwen3-4b-instruct-2507-q8_0"),
+        vram_freed_mb=0 if analysis and analysis.get('explanation_source') == 'measured_findings' else llm_manager._last_unload_vram_mb,
     )

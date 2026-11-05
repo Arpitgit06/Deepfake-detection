@@ -149,6 +149,14 @@ if errorlevel 1 (
 )
 call :print_color "%GREEN%" "[OK] Backend dependencies installed"
 
+call :print_color "%BLUE%" "[INFO] Installing matching CUDA PyTorch for whole-image classification..."
+call "%VENV_DIR%\Scripts\python.exe" -m pip install torch==2.2.0+cu121 torchvision==0.17.0+cu121 --index-url https://download.pytorch.org/whl/cu121
+if errorlevel 1 goto :error_exit
+call "%VENV_DIR%\Scripts\python.exe" "%BACKEND_DIR%\download_image_model.py"
+if errorlevel 1 (
+    call :print_color "%YELLOW%" "[WARN] Whole-image model unavailable; image verdicts may be inconclusive. Re-run backend\download_image_model.py."
+)
+
 if not exist "%MODELS_DIR%" (
     mkdir "%MODELS_DIR%"
     call :print_color "%GREEN%" "[OK] Created models directory"

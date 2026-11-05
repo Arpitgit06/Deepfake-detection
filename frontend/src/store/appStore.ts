@@ -14,22 +14,60 @@ const generateId = (): string => {
   return `id-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 11)}`
 }
 
+export interface DetectorResult {
+  status?: string
+  confidence?: number
+  ai_probability?: number | null
+  raw_model_score?: number | null
+  verdict_eligible?: boolean
+  score_kind?: string
+  decision_reason?: string
+  is_deepfake?: boolean | null
+  is_threat?: boolean | null
+  is_synchronized?: boolean | null
+  error?: string
+  model_used?: string
+  explanations?: Explanation[]
+  metadata_evidence?: { description: string; verified: boolean }[]
+  heart_rate_bpm?: number | null
+  snr_db?: number
+  signal_quality?: number
+  sync_score?: number
+  risk_score?: number
+  threat_level?: string
+  raw_signal?: number[] | null
+  phoneme_viseme_pairs?: {
+    phoneme: string; expected_viseme: string | number; observed_viseme: string | number
+    match: boolean; time_diff?: number
+  }[]
+  entities?: { type: string; value: string; confidence: number }[]
+  tactics?: { name: string; description: string; confidence: number; evidence?: string[] }[]
+  region_analysis?: { preview_base64: string; limitation: string; regions: unknown[] }
+}
+
 export interface AnalysisResult {
   analysis_id: string
   status: string
   confidence: number
-  results: Record<string, any>
+  results: Record<string, DetectorResult>
   explanations: Explanation[]
   processing_time_ms: number
   timestamp: string
   llm_summary?: string
+  explanation_source?: string | null
+  llm_review?: { status: string; assessment?: string; reason: string; scope: string }
+  evidence_report?: {
+    findings: { check: string; observation: string; meaning: string; score?: number }[]
+    limitations: string[]
+    score_note: string
+  }
 }
 
 export interface Explanation {
   type: string
   message: string
   severity: 'success' | 'warning' | 'error' | 'info'
-  details?: Record<string, any>
+  details?: Record<string, unknown>
 }
 
 export interface AnalysisJob {

@@ -1,10 +1,8 @@
 import { cn } from '@/lib/utils'
 import { Layout } from '@/components/layout/Layout'
-import { Shield, Brain, Heart, Mic, Search, FileCode, BookOpen, Terminal } from 'lucide-react'
+import { Shield, Brain, Heart, Mic, Search, BookOpen, Terminal } from 'lucide-react'
 import { Card } from '@/components/ui/Card'
-import { Button } from '@/components/ui/Button'
 import { Tabs, TabPanel } from '@/components/ui/Tabs'
-import { Link } from 'react-router-dom'
 import { useState } from 'react'
 
 const apiEndpoints = [
@@ -12,25 +10,25 @@ const apiEndpoints = [
     method: 'POST',
     path: '/api/v1/analyze/image',
     description: 'Analyze an image for deepfake/manipulation indicators',
-    params: ['file (image)', 'return_heatmap (boolean)', 'sensitivity (0-1)'],
+    params: ['file (image, up to 100 MB)', 'return_heatmap (boolean)', 'sensitivity (0-1)'],
   },
   {
     method: 'POST',
     path: '/api/v1/analyze/video',
     description: 'Analyze a video with PPG liveness and phoneme-viseme synchronization',
-    params: ['file (video)', 'enable_ppg (boolean)', 'enable_phoneme_viseme (boolean)', 'sample_rate (1-30)'],
+    params: ['file (video, up to 100 MB)', 'enable_ppg (boolean)', 'enable_phoneme_viseme (boolean)', 'sample_rate (1-30)'],
   },
   {
     method: 'POST',
     path: '/api/v1/analyze/text',
     description: 'Analyze text for financial scam indicators and social engineering tactics',
-    params: ['text (string)', 'language (optional)', 'extract_entities (boolean)', 'check_threat_intel (boolean)'],
+    params: ['text (nonempty string)', 'language (optional)', 'extract_entities (boolean)', 'check_threat_intel (boolean)'],
   },
   {
     method: 'POST',
     path: '/api/v1/analyze/multimodal',
-    description: 'Combined multimodal analysis of image, video, audio, and text',
-    params: ['image (optional)', 'video (optional)', 'audio (optional)', 'text_content (optional)'],
+    description: 'Combine images, videos, and text; provide at least one input. Audio checks use the video audio track; standalone audio files are unsupported.',
+    params: ['image (optional, up to 100 MB)', 'video (optional, up to 100 MB)', 'text_content (optional)'],
   },
 ]
 
@@ -284,7 +282,7 @@ export const DocsPage = () => {
                 <h2 className="text-2xl font-bold text-gray-900 mb-4">Response Format</h2>
                 <pre className="bg-gray-900 text-gray-100 p-4 rounded-lg overflow-x-auto text-sm"><code>{`{
   "analysis_id": "uuid",
-  "status": "suspicious" | "clean",
+  "status": "suspicious" | "clean" | "inconclusive",
   "confidence": 0.87,
   "results": {
     "ppg_liveness": { ... },

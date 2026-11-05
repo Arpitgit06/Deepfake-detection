@@ -96,7 +96,7 @@ class PhonemeVisemeDetector:
             self.use_asr = True
             logger.info("Wav2Vec2 phoneme model loaded")
         except Exception as e:
-            logger.warning(f"ASR model not available: {e}, using energy-based fallback")
+            logger.warning(f"ASR model not available: {e}; speech-to-mouth alignment will be inconclusive")
             self.use_asr = False
 
     async def detect(self, video_bytes: bytes) -> Dict[str, Any]:
@@ -104,6 +104,11 @@ class PhonemeVisemeDetector:
         Detect phoneme-viseme synchronization from video.
         """
         try:
+            if not self.use_asr:
+                return self._create_result(
+                    is_synchronized=False, confidence=0,
+                    explanations=[{'type': 'speech_model_unavailable', 'severity': 'warning',
+                                   'message': 'Speech-to-mouth timing could not be assessed because the phoneme model is unavailable. Audio energy alone cannot establish lip synchronization.'}])
             # Extract audio and video frames
             audio_data, fps, video_frames = await self._extract_audio_video(video_bytes)
             
@@ -639,13 +644,16 @@ class PhonemeVisemeDetector:
         self,
         is_synchronized: bool,
         confidence: float,
-        sync_score: float,
+        sync_score: float = 0.0,
         phoneme_viseme_pairs: List[Dict] = None,
         explanations: List[Dict] = None,
     ) -> Dict[str, Any]:
         return {
             "detector": "phoneme_viseme",
-            "is_synchronized": is_synchronized,
+            "status": ("inconclusive" if not confidence or not self.use_asr else
+                       "clean" if is_synchronized else "suspicious"),
+            "is_synchronized": is_synchronized if confidence and self.use_asr else None,
+            "method": "phoneme_alignment" if self.use_asr else "unavailable",
             "confidence": confidence,
             "sync_score": sync_score,
             "phoneme_viseme_pairs": phoneme_viseme_pairs or [],

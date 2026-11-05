@@ -10,38 +10,38 @@ const features = [
   {
     icon: Heart,
     title: 'Biological Liveness (PPG)',
-    description: 'Detects human pulse via micro-color variations in skin. Synthetic avatars lack physiological blood-flow signals.',
+    description: 'Checks for pulse-like skin color changes when the clip supports measurement. Missing pulse evidence alone does not establish a fake.',
     color: 'bg-red-100 text-red-600',
     iconColor: 'text-red-600',
   },
   {
     icon: Mic,
     title: 'Phoneme-Viseme Sync',
-    description: 'Validates audio-visual physics consistency. Extracts phonemes from audio and maps to visemes from video.',
+    description: 'Compares speech and mouth timing when the required speech model is available. Unsupported checks remain inconclusive.',
     color: 'bg-blue-100 text-blue-600',
     iconColor: 'text-blue-600',
   },
   {
     icon: Search,
     title: 'Financial Threat Graphing',
-    description: 'Specialized scam pattern recognition. Extracts entities and cross-references against threat intelligence.',
+    description: 'Combines local scam patterns with contextual Qwen review. External reputation checks are not currently configured.',
     color: 'bg-amber-100 text-amber-600',
     iconColor: 'text-amber-600',
   },
   {
     icon: Brain,
     title: 'Deepfake Classification',
-    description: 'EfficientNet-based detection with attention heatmaps. Identifies manipulation artifacts in images and video frames.',
+    description: 'Provides experimental classifier diagnostics and applicability checks. Unvalidated model activations cannot establish authenticity.',
     color: 'bg-purple-100 text-purple-600',
     iconColor: 'text-purple-600',
   },
 ]
 
 const stats = [
-  { value: '99.2%', label: 'PPG Detection Accuracy' },
-  { value: '94.7%', label: 'Phoneme-Viseme Sync' },
-  { value: '97.1%', label: 'Financial Threat Detection' },
-  { value: '< 30s', label: 'Average Analysis Time' },
+  { value: 'Local', label: 'Media processing' },
+  { value: '4', label: 'Input modes' },
+  { value: 'Unrated', label: 'Accuracy requires independent validation' },
+  { value: 'Review', label: 'Unsupported inputs stay inconclusive' },
 ]
 
 export const LandingPage = () => {
@@ -86,7 +86,7 @@ export const LandingPage = () => {
             <div className="flex flex-wrap items-center justify-center gap-8 text-sm text-gray-500">
               <div className="flex items-center gap-2">
                 <CheckCircle className="w-4 h-4 text-success-500" />
-                <span>No data stored</span>
+                <span>Media processed locally</span>
               </div>
               <div className="flex items-center gap-2">
                 <CheckCircle className="w-4 h-4 text-success-500" />

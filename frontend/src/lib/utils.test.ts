@@ -10,6 +10,11 @@ describe('Utility Functions', () => {
     it('filters falsy values', () => {
       expect(cn('a', false, 'b', null, 'c')).toBe('a b c')
     })
+
+    it('allows card surface and padding overrides without conflicting classes', () => {
+      expect(cn('bg-white p-6 border-gray-200', 'bg-primary-50 p-0 border-primary-500'))
+        .toBe('bg-primary-50 p-0 border-primary-500')
+    })
   })
 
   describe('formatFileSize', () => {

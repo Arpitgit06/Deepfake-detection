@@ -142,6 +142,14 @@ print_info "Installing backend dependencies..."
 pip install -r requirements.txt
 print_ok "Backend dependencies installed"
 
+if command -v nvidia-smi >/dev/null 2>&1; then
+    pip install torch==2.2.0 torchvision==0.17.0 --index-url https://download.pytorch.org/whl/cu121
+else
+    print_warn "Whole-image classification requires CUDA by default. Explicitly set AI_IMAGE_REQUIRE_GPU=false to allow CPU inference."
+fi
+python "$BACKEND_DIR/download_image_model.py" \
+    || print_warn "Whole-image model download incomplete; image verdicts may be inconclusive."
+
 # Dev dependencies
 read -p "Install development dependencies (pytest, black, mypy, etc.)? [y/N] " -n 1 -r
 echo

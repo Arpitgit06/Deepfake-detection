@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import { cn } from '@/lib/utils'
 import { ChevronDown, ChevronUp } from 'lucide-react'
 
@@ -12,13 +12,16 @@ interface CollapsibleProps {
 
 export const Collapsible = ({ title, children, defaultOpen = false, className, icon }: CollapsibleProps) => {
   const [isOpen, setIsOpen] = useState(defaultOpen)
+  const panelId = useId()
 
   return (
     <div className={cn('border border-gray-200 rounded-xl overflow-hidden', className)}>
       <button
+        type="button"
         onClick={() => setIsOpen(!isOpen)}
         className="w-full flex items-center justify-between p-4 bg-gray-50 hover:bg-gray-100 transition-colors text-left"
         aria-expanded={isOpen}
+        aria-controls={panelId}
       >
         <div className="flex items-center gap-3">
           {icon}
@@ -28,12 +31,10 @@ export const Collapsible = ({ title, children, defaultOpen = false, className, i
           {isOpen ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
         </div>
       </button>
-      <div
-        className={cn('overflow-hidden transition-all duration-200', isOpen ? 'max-h-96 opacity-100' : 'max-h-0 opacity-0')}
-      >
-        <div className="p-4 border-t border-gray-200 bg-white animate-fade-in">
+      <div id={panelId} hidden={!isOpen}>
+        {isOpen && <div className="p-4 border-t border-gray-200 bg-white">
           {children}
-        </div>
+        </div>}
       </div>
     </div>
   )

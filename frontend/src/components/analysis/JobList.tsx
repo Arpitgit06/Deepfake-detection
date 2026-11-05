@@ -35,7 +35,7 @@ const statusConfig = {
 }
 
 export const JobList = () => {
-  const { jobs, currentJobId, removeJob, setCurrentJob } = useAppStore()
+  const { jobs, currentJobId } = useAppStore()
 
   if (jobs.length === 0) {
     return (
@@ -65,7 +65,7 @@ interface JobItemProps {
 
 const JobItem = ({ job, isActive }: JobItemProps) => {
   const { removeJob, setCurrentJob } = useAppStore()
-  const { icon: StatusIcon, color, bg, label: statusLabel } = statusConfig[job.status]
+  const { icon: StatusIcon, color, label: statusLabel } = statusConfig[job.status]
   const TypeIcon = getTypeIconComponent(job.type)
 
   const handleClick = () => setCurrentJob(job.id)

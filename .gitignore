@@ -1,51 +1,111 @@
+# ========================
 # Root .gitignore
-# Dependencies
+# TruthLens AI - Deepfake & Scam Detection
+# ========================
+
+# ---------- Dependencies ----------
 node_modules/
 backend/venv/
 backend/env/
+backend/.venv/
+backend/ENV/
 
-# Build outputs
+# ---------- Build outputs ----------
 frontend/dist/
 frontend/build/
+*.local
 
-# Environment files
+# ---------- Environment files ----------
 .env
 .env.local
 .env.*.local
 
-# Logs
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+.eggs/
+dist/
+build/
+*.whl
+.Python
+pip-log.txt
+pip-delete-this-directory.txt
+
+# ---------- Logs ----------
 *.log
 logs/
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
 
-# IDE
+# ---------- IDE / Editor ----------
 .vscode/
 .idea/
 *.swp
 *.swo
+*.sublime-project
+*.sublime-workspace
+*.code-workspace
 
-# OS
+# ---------- OS ----------
 .DS_Store
 Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
 
-# Models and data
+# ---------- Models & data ----------
 backend/models/
 data/
 uploads/
 *.onnx
 *.pt
 *.pth
+*.h5
+*.hdf5
+*.pkl
+*.joblib
 
-# Temporary files
+# ---------- Temporary files ----------
 *.tmp
 *.temp
 temp/
 tmp/
+output/
 
-# Test coverage
+# ---------- Test & coverage ----------
 coverage/
 htmlcov/
 .coverage
+.coverage.*
 .pytest_cache/
+.tox/
+.hypothesis/
+.mypy_cache/
+.dmypy.json
+dmypy.json
 
-# Docker
+# ---------- TypeScript ----------
+*.tsbuildinfo
+vite.config.ts.timestamp-*.mjs
+
+# ---------- Docker ----------
 .docker/
+
+# ---------- Jupyter ----------
+.ipynb_checkpoints/
+
+# ---------- Verification screenshots ----------
+*-verification.jpg
+*-verification.png
+
+# ---------- Hackathon prep docs ----------
+HACKATHON_*.md
+
+# ---------- Misc ----------
+*.bak
+*.orig
+.cache/

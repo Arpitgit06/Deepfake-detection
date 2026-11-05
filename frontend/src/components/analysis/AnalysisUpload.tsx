@@ -37,14 +37,14 @@ export const AnalysisUpload = ({ mode, onAnalyze }: { mode: AnalysisMode; onAnal
   }, [])
   const { addJob, updateJob } = useAppStore()
 
-  const getAllowedTypes = () => {
+  const getAllowedTypes = useCallback(() => {
     switch (mode) {
       case 'image': return ALLOWED_TYPES.image
       case 'video': return ALLOWED_TYPES.video
       case 'multimodal': return [...ALLOWED_TYPES.image, ...ALLOWED_TYPES.video]
       default: return []
     }
-  }
+  }, [mode])
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
     const newFiles = acceptedFiles.map((file) => {
@@ -69,9 +69,9 @@ export const AnalysisUpload = ({ mode, onAnalyze }: { mode: AnalysisMode; onAnal
       return newFiles
     })
     setError(null)
-  }, [mode])
+  }, [mode, getAllowedTypes])
 
-  const { getRootProps, getInputProps, isDragActive } = useDropzone({
+  const { getRootProps, getInputProps, isDragActive, open } = useDropzone({
     onDrop,
     accept: getAllowedTypes().reduce((acc, type) => ({ ...acc, [type]: [] }), {}),
     maxSize: MAX_FILE_SIZE,
@@ -140,7 +140,7 @@ export const AnalysisUpload = ({ mode, onAnalyze }: { mode: AnalysisMode; onAnal
             check_threat_intel: true,
           } as AnalyzeTextParams)
           break
-        case 'multimodal':
+        case 'multimodal': {
           const imageFile = files.find(f => f.type.startsWith('image/'))
           const videoFile = files.find(f => f.type.startsWith('video/'))
           const audioFile = files.find(f => f.type.startsWith('audio/'))
@@ -152,6 +152,7 @@ export const AnalysisUpload = ({ mode, onAnalyze }: { mode: AnalysisMode; onAnal
             text_content: textContent || undefined,
           } as AnalyzeMultimodalParams)
           break
+        }
       }
 
       if (progressInterval) clearInterval(progressInterval)
@@ -228,6 +229,10 @@ export const AnalysisUpload = ({ mode, onAnalyze }: { mode: AnalysisMode; onAnal
             Max size: {formatFileSize(MAX_FILE_SIZE)} • Allowed: {getAllowedTypes().map(t => t.split('/')[1]).join(', ')}
           </p>
           {mode === 'image' && <p className="text-sm text-gray-500 mt-2">Checks the whole image for AI generation, including artwork and scenes without faces.</p>}
+          <Button type="button" variant="secondary" className="mt-4" disabled={isAnalyzing}
+            onClick={(event) => { event.stopPropagation(); open() }}>
+            <Upload className="w-4 h-4" /> Browse files
+          </Button>
         </div>
       </div>
 

@@ -40,6 +40,9 @@ class Settings(BaseSettings):
     AI_IMAGE_MODEL_ID: str = 'dima806/ai_vs_real_image_detection'
     AI_IMAGE_MODEL_REVISION: str = '5d647683672ffd0080441f4e8b4345934c44cc61'
     AI_IMAGE_REQUIRE_GPU: bool = True
+    # Opt-in development mode only. The current classifier has no independent
+    # calibration/validation for uploads; its activations are diagnostic by default.
+    AI_IMAGE_EXPERIMENTAL_VERDICTS: bool = False
     # An abstention band: softmax scores are not calibrated certainty.
     AI_IMAGE_FAKE_THRESHOLD: float = Field(default=0.7, ge=0.5, le=1.0)
     AI_IMAGE_REAL_THRESHOLD: float = Field(default=0.3, ge=0.0, le=0.5)

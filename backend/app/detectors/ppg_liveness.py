@@ -86,15 +86,15 @@ class PPGLivenessDetector:
         """
         try:
             # Extract frames
-            frames, fps, timestamps = await self._extract_frames(video_bytes, sample_rate)
+            frames, fps, timestamps = await self._extract_frames(video_bytes, max(10, sample_rate))
             
-            if len(frames) < 30:  # Need at least ~6 seconds at 5 fps
+            if len(frames) < 30 or not timestamps or timestamps[-1] - timestamps[0] < 6 or fps <= 8:
                 return self._create_result(
                     has_pulse=False,
                     confidence=0.0,
                     explanations=[{
                         "type": "insufficient_frames",
-                        "message": f"Only {len(frames)} frames extracted, need at least 30 for reliable PPG",
+                        "message": f"Pulse checking needs at least 6 seconds of video and a sampling rate above 8 fps; available: {len(frames)} frames at {fps:.1f} fps.",
                         "severity": "warning"
                     }]
                 )
@@ -214,7 +214,7 @@ class PPGLivenessDetector:
             except:
                 pass
                 
-        return frames, fps, timestamps
+        return frames, fps / frame_interval, timestamps
 
     async def _extract_roi_signals(self, frames: List[np.ndarray]) -> Optional[np.ndarray]:
         """Extract RGB signals from facial ROIs (forehead, cheeks)."""
@@ -610,6 +610,7 @@ class PPGLivenessDetector:
     ) -> Dict[str, Any]:
         return {
             "detector": "ppg_liveness",
+            "status": "clean" if has_pulse and confidence else "inconclusive",
             "has_pulse": has_pulse,
             "confidence": confidence,
             "heart_rate_bpm": heart_rate_bpm,

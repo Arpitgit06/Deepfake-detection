@@ -1,4 +1,4 @@
-import { cn, getSeverityColor, getSeverityIcon, formatConfidence, formatDuration, truncate, verdictLabel } from '@/lib/utils'
+import { cn, getSeverityColor, formatConfidence, formatDuration, truncate, verdictLabel } from '@/lib/utils'
 import { useState } from 'react'
 import { Card } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
@@ -10,9 +10,9 @@ import { askLLM } from '@/services/api'
 import { 
   AlertCircle, CheckCircle, AlertTriangle, Info, 
   Heart, Mic, Brain, Shield, Search, Eye, 
-  ChevronRight, ExternalLink, Download, Loader2
+  Loader2
 } from 'lucide-react'
-import { Explanation, AnalysisResult } from '@/store/appStore'
+import { Explanation, AnalysisResult, DetectorResult } from '@/store/appStore'
 
 const severityIcons = {
   error: AlertCircle,
@@ -67,7 +67,6 @@ export const ExplanationList = ({ explanations }: { explanations: Explanation[] 
     </div>
   )
 }
-
 export const ConfidenceIndicator = ({ 
   confidence, 
   label = 'Confidence', 
@@ -86,7 +85,7 @@ export const ConfidenceIndicator = ({
   return (
     <div className="flex items-center gap-4">
       <div className={cn('flex-1', size === 'sm' && 'max-w-xs')}>
-        <div className="flex items-center justify-between text-sm mb-1">
+        <div className="flex items-center justify-between gap-3 text-sm mb-1">
           <span className="font-medium text-gray-700">{label}</span>
           <span className="font-semibold text-gray-700">
             {formatConfidence(confidence)}
@@ -104,7 +103,7 @@ export const DetectorResultCard = ({
   explanations 
 }: { 
   detectorName: string
-  result: Record<string, any>
+  result: DetectorResult
   explanations: Explanation[]
 }) => {
   const detectorIcons: Record<string, React.ReactNode> = {
@@ -121,6 +120,9 @@ export const DetectorResultCard = ({
 
   const detectorTitles: Record<string, string> = {
     ai_generated_image: 'AI Image Detection — Whole Image',
+    ai_generated_video: 'AI Video Detection — Sampled Frames',
+    llm_text_review: 'Qwen Contextual Text Review',
+    phoneme_viseme_sync: 'Speech and Mouth Timing',
     ppg_liveness: 'PPG Liveness Detection',
     phoneme_viseme: 'Phoneme-Viseme Sync',
     deepfake_image: 'Deepfake Detection',
@@ -135,7 +137,7 @@ export const DetectorResultCard = ({
   const confidence = result.confidence ?? 0
   const isThreat = result.is_deepfake ?? result.is_threat ?? (result.is_synchronized === false)
   const detectorStatus = result.status || (isThreat ? 'suspicious' : 'clean')
-  const aiScore = typeof result.ai_probability === 'number' ? result.ai_probability : null
+  const aiScore = result.verdict_eligible !== false && typeof result.ai_probability === 'number' ? result.ai_probability : null
   const noScore = ['not_applicable', 'inconclusive', 'unavailable', 'error'].includes(detectorStatus)
   
   return (
@@ -153,13 +155,29 @@ export const DetectorResultCard = ({
               </p>
             </div>
           </div>
-          {detectorName === 'ai_generated_image' ? (
+          {detectorName === 'ai_generated_image' || detectorName === 'ai_generated_video' ? (
             aiScore !== null && <ConfidenceIndicator confidence={aiScore} label="AI-generation model score" size="sm" risk />
-          ) : !noScore && <ConfidenceIndicator confidence={confidence} label="Confidence" size="sm" />}
+          ) : !noScore && confidence > 0 && <ConfidenceIndicator confidence={confidence} label="Confidence" size="sm" />}
         </div>
       </div>
       
       <div className="p-4">
+        {result.decision_reason === 'experimental_opt_in' &&
+          <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+            <p className="font-semibold">Experimental classification</p>
+            <p>This result uses an uncalibrated model score. It can flag AI-generation indicators, but it does not prove that the image or video is fake or real.</p>
+          </div>}
+        {result.verdict_eligible === false && typeof result.raw_model_score === 'number' &&
+          <Collapsible title="Experimental model diagnostics — not an authenticity verdict" defaultOpen={false}>
+            <p className="text-sm text-gray-700">Raw classifier activation: {(result.raw_model_score * 100).toFixed(2)}%.</p>
+            <p className="text-sm text-gray-600 mt-2">This is an uncalibrated model output, not the probability that the input is fake. It was excluded from the verdict. A high or low activation can be wrong.</p>
+          </Collapsible>}
+        {result.region_analysis?.preview_base64 && <div className="mb-4">
+          <h4 className="font-medium text-gray-900 mb-2">Areas that influenced the model</h4>
+          <img src={`data:image/jpeg;base64,${result.region_analysis.preview_base64}`} alt="Numbered regions tested for model sensitivity" className="max-h-96 max-w-full rounded-lg" />
+          {!result.region_analysis.regions?.length && <p className="text-sm text-gray-600 mt-2">No tested area reduced support for the predicted class by at least one score point. This test did not identify a dominant area.</p>}
+          <p className="text-sm text-gray-600 mt-2">{result.region_analysis.limitation}</p>
+        </div>}
         {/* Key metrics based on detector type */}
         <div className="grid grid-cols-2 gap-4 mb-4">
           {detectorName.includes('ppg') && result.heart_rate_bpm && (
@@ -180,13 +198,13 @@ export const DetectorResultCard = ({
               <p className="font-bold text-lg text-gray-900">{(result.signal_quality * 100).toFixed(0)}%</p>
             </div>
           )}
-          {detectorName.includes('phoneme') && result.sync_score !== undefined && (
+          {detectorName.includes('phoneme') && !noScore && result.sync_score !== undefined && (
             <div className="bg-gray-50 rounded-lg p-3">
               <p className="text-xs text-gray-500">Sync Score</p>
               <p className="font-bold text-lg text-gray-900">{(result.sync_score * 100).toFixed(0)}%</p>
             </div>
           )}
-          {detectorName.includes('phoneme') && result.phoneme_viseme_pairs && (
+          {detectorName.includes('phoneme') && result.phoneme_viseme_pairs && result.phoneme_viseme_pairs.length > 0 && (
             <div className="bg-gray-50 rounded-lg p-3">
               <p className="text-xs text-gray-500">Pairs Analyzed</p>
               <p className="font-bold text-lg text-gray-900">{result.phoneme_viseme_pairs.length}</p>
@@ -236,7 +254,7 @@ export const DetectorResultCard = ({
                   </tr>
                 </thead>
                 <tbody>
-                  {result.phoneme_viseme_pairs.slice(0, 20).map((pair: any, i: number) => (
+                  {result.phoneme_viseme_pairs.slice(0, 20).map((pair, i) => (
                     <tr key={i} className="border-b border-gray-100">
                       <td className="py-2 pr-4 font-mono">{pair.phoneme}</td>
                       <td className="py-2 pr-4">{pair.expected_viseme}</td>
@@ -260,7 +278,7 @@ export const DetectorResultCard = ({
         {detectorName === 'financial_threat' && result.entities && (
           <Collapsible title="Extracted Entities" defaultOpen={false} icon={<Search className="w-4 h-4" />}>
             <div className="space-y-2 max-h-64 overflow-y-auto">
-              {result.entities.slice(0, 20).map((entity: any, i: number) => (
+              {result.entities.slice(0, 20).map((entity, i) => (
                 <div key={i} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
                   <div className="flex items-center gap-3">
                     <Badge variant="info" size="sm">{entity.type}</Badge>
@@ -276,7 +294,7 @@ export const DetectorResultCard = ({
         {detectorName === 'financial_threat' && result.tactics && (
           <Collapsible title="Psychological Tactics" defaultOpen={false} icon={<Brain className="w-4 h-4" />}>
             <div className="space-y-2">
-              {result.tactics.map((tactic: any, i: number) => (
+              {result.tactics.map((tactic, i) => (
                 <div key={i} className="p-3 bg-gray-50 rounded-lg border-l-4 border-warning-500">
                   <div className="flex items-center justify-between">
                     <span className="font-medium capitalize">{tactic.name.replace(/_/g, ' ')}</span>
@@ -299,7 +317,7 @@ export const DetectorResultCard = ({
             <div className="h-48 bg-gray-50 rounded-lg p-2 relative overflow-hidden">
               <canvas 
                 ref={(el) => {
-                  if (el) drawSignal(el, result.raw_signal)
+                  if (el && result.raw_signal) drawSignal(el, result.raw_signal)
                 }} 
                 className="w-full h-full"
               />
@@ -361,11 +379,11 @@ export const AnalysisResultView = ({ result }: { result: AnalysisResult }) => {
   // Defensive: the payload shape is not guaranteed for every job
   const resultEntries = Object.entries(result?.results ?? {})
   const detectorResults = resultEntries.filter(([_, v]) => v && typeof v === 'object' && !v.error)
-  const hasErrors = resultEntries.some(([_, v]: any) => v?.error)
+  const hasErrors = resultEntries.some(([, value]) => value?.error)
   const confidence = result?.confidence ?? 0
   const unknown = !['suspicious', 'clean'].includes(result.status)
-  const imageResult = result.results?.ai_generated_image
-  const imageScore = typeof imageResult?.ai_probability === 'number' ? imageResult.ai_probability : null
+  const imageResult = result.results?.ai_generated_image ?? result.results?.ai_generated_video
+  const imageScore = imageResult?.verdict_eligible !== false && typeof imageResult?.ai_probability === 'number' ? imageResult.ai_probability : null
 
   return (
     <div className="space-y-6">
@@ -391,14 +409,49 @@ export const AnalysisResultView = ({ result }: { result: AnalysisResult }) => {
             <div className="text-right">
               {imageScore !== null ? <ConfidenceIndicator confidence={imageScore} label="AI-generation model score" size="lg" risk />
                 : !unknown && confidence > 0 ? <ConfidenceIndicator confidence={confidence} label="Verdict confidence" size="lg" />
-                : <p className="text-sm text-gray-500">{imageResult?.metadata_evidence?.length ? 'Metadata evidence' : 'Insufficient evidence for a verdict'}</p>}
+                : <p className="text-sm text-gray-500">{imageResult?.metadata_evidence?.length ? 'Metadata evidence' : unknown ? 'Insufficient evidence for a verdict' : 'Contextual assessment; no calibrated score'}</p>}
               <p className="text-xs text-gray-500 mt-1">Processed in {formatDuration(result.processing_time_ms ?? 0)}</p>
             </div>
           </div>
         </div>
       </Card>
 
-      {unknown && <Alert variant="warning">The available evidence is insufficient to determine authenticity. This result does not mean the image is real.</Alert>}
+      {unknown && <Alert variant="warning">The available evidence is insufficient or conflicting. Review the findings below; this result does not establish that the input is real or fake.</Alert>}
+
+      {result.llm_review && <Alert variant={result.llm_review.assessment === 'needs_review' ? 'warning' : 'info'}>
+        <strong>Qwen evidence review: </strong>{result.llm_review.reason}
+        <p className="text-xs mt-1">Reviews algorithm findings only; the installed Qwen model cannot view images or video. It does not change classifier scores.</p>
+      </Alert>}
+
+      {result.evidence_report && <Card>
+        <div className="p-4 border-b border-gray-200">
+          <h3 className="font-semibold text-gray-900">What the checks found</h3>
+          <p className="text-sm text-gray-600 mt-2">{result.evidence_report.score_note}</p>
+        </div>
+        <div className="p-4 space-y-4">
+          {result.evidence_report.findings.filter(finding => !finding.check.startsWith('Frame at ')).map((finding, index) => <div key={index} className="rounded-lg bg-gray-50 p-3">
+            <h4 className="font-medium text-gray-900">{finding.check}</h4>
+            <p className="text-sm text-gray-800 mt-1">{finding.observation}</p>
+            <p className="text-sm text-gray-600 mt-1">{finding.meaning}</p>
+          </div>)}
+          {result.evidence_report.findings.some(finding => finding.check.startsWith('Frame at ')) &&
+            <Collapsible title="Frame-by-frame findings" defaultOpen={false}>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2">
+                {result.evidence_report.findings.filter(finding => finding.check.startsWith('Frame at ')).map((finding, index) =>
+                  <div key={index} className="p-3 bg-gray-50 rounded-lg text-sm">
+                    <h4 className="font-medium">{finding.check}</h4><p>{finding.observation}</p>
+                    <p className="text-gray-600">{finding.meaning}</p>
+                  </div>)}
+              </div>
+            </Collapsible>}
+          {result.evidence_report.limitations.length > 0 && <div>
+            <h4 className="font-medium text-gray-900">What remains uncertain</h4>
+            <ul className="list-disc pl-5 text-sm text-gray-600 space-y-1 mt-2">
+              {result.evidence_report.limitations.map((limitation, index) => <li key={index}>{limitation}</li>)}
+            </ul>
+          </div>}
+        </div>
+      </Card>}
 
       {/* AI Explanation (local Qwen LLM) */}
       {result.llm_summary && (
@@ -408,8 +461,8 @@ export const AnalysisResultView = ({ result }: { result: AnalysisResult }) => {
               <Brain className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="font-semibold text-gray-900">AI Explanation</h3>
-              <p className="text-xs text-gray-500">Generated locally by Qwen3-4B (runs in GPU memory only during the task)</p>
+              <h3 className="font-semibold text-gray-900">{result.explanation_source === 'measured_findings' ? 'What this result means' : 'AI Explanation'}</h3>
+              <p className="text-xs text-gray-500">{result.explanation_source === 'measured_findings' ? 'Based on measured input properties and the limits of the installed detector.' : 'Qwen reviews the measured findings and explains them in plain language.'}</p>
             </div>
           </div>
           <div className="p-4">
@@ -452,21 +505,6 @@ export const AnalysisResultView = ({ result }: { result: AnalysisResult }) => {
           </div>
         </Card>
       )}
-
-      {/* Raw Data */}
-      <Collapsible title="Raw Analysis Data" defaultOpen={false} icon={<ExternalLink className="w-4 h-4" />}>
-        <div className="p-4 bg-gray-50 rounded-lg">
-          <pre className="text-xs overflow-x-auto max-h-96">
-            {JSON.stringify(result, null, 2)}
-          </pre>
-          <div className="mt-3 flex justify-end">
-            <Button variant="secondary" size="sm" onClick={() => downloadResult(result)}>
-              <Download className="w-4 h-4 mr-1" />
-              Download JSON
-            </Button>
-          </div>
-        </div>
-      </Collapsible>
 
       {/* Ask the local AI about this result */}
       <AskAIPanel analysisId={result.analysis_id} />
@@ -537,14 +575,4 @@ const AskAIPanel = ({ analysisId }: { analysisId: string }) => {
       </div>
     </Card>
   )
-}
-
-function downloadResult(result: AnalysisResult) {
-  const blob = new Blob([JSON.stringify(result, null, 2)], { type: 'application/json' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = `truthlens-analysis-${result.analysis_id}.json`
-  a.click()
-  URL.revokeObjectURL(url)
 }

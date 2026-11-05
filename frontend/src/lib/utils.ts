@@ -1,5 +1,8 @@
+import { clsx } from 'clsx'
+import { twMerge } from 'tailwind-merge'
+
 export const cn = (...classes: (string | undefined | null | false)[]): string => {
-  return classes.filter(Boolean).join(' ')
+  return twMerge(clsx(classes))
 }
 
 export const formatFileSize = (bytes: number): string => {
@@ -63,12 +66,12 @@ export const truncate = (str: string, length: number): string => {
   return str.slice(0, length) + '...'
 }
 
-export const debounce = <T extends (...args: any[]) => any>(
-  fn: T,
+export const debounce = <TArgs extends unknown[]>(
+  fn: (...args: TArgs) => unknown,
   delay: number
-): ((...args: Parameters<T>) => void) => {
+): ((...args: TArgs) => void) => {
   let timeoutId: ReturnType<typeof setTimeout>
-  return (...args: Parameters<T>) => {
+  return (...args: TArgs) => {
     clearTimeout(timeoutId)
     timeoutId = setTimeout(() => fn(...args), delay)
   }
